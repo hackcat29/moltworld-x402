@@ -426,8 +426,9 @@ export function renderLandingPage(c: Context): Response {
       <a href="/v1/models">GET /v1/models (JSON)</a>
       <a href="/health">GET /health</a>
       <a href="https://facilitator.goplausible.xyz" target="_blank" rel="noopener">GoPlausible Facilitator</a>
-      <a href="https://github.com/hackcat29/moltworld-x402" target="_blank" rel="noopener">GitHub Repository</a>
+      <a href="https://github.com/hackcat29/moltworld-x402" target="_blank" rel="noopener">GitHub: hackcat29/moltworld-x402</a>
     </div>
+    <p>The current GitHub repository was created because the original account, UncleTom29, was suspended. The original Moltworld commit history is preserved.</p>
   </div>
 
   <script>
