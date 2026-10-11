@@ -24,7 +24,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 APP_DIR="/opt/moltworld-x402"
-REPO_URL="https://github.com/UncleTom29/moltworld-x402.git"
+REPO_URL="https://github.com/hackcat29/moltworld-x402.git"
 
 echo -e "${GREEN}[1/8] Updating system packages...${NC}"
 apt update && apt upgrade -y

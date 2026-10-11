@@ -70,7 +70,7 @@ Run the automated setup script directly:
 
 ```bash
 # Clone the repo to /opt/moltworld-x402
-git clone https://github.com/UncleTom29/moltworld-x402.git /opt/moltworld-x402
+git clone https://github.com/hackcat29/moltworld-x402.git /opt/moltworld-x402
 cd /opt/moltworld-x402
 
 # Run the automated setup script

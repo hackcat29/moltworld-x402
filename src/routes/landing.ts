@@ -426,7 +426,7 @@ export function renderLandingPage(c: Context): Response {
       <a href="/v1/models">GET /v1/models (JSON)</a>
       <a href="/health">GET /health</a>
       <a href="https://facilitator.goplausible.xyz" target="_blank" rel="noopener">GoPlausible Facilitator</a>
-      <a href="https://github.com/UncleTom29/moltworld-x402" target="_blank" rel="noopener">GitHub Repository</a>
+      <a href="https://github.com/hackcat29/moltworld-x402" target="_blank" rel="noopener">GitHub Repository</a>
     </div>
   </div>
 
