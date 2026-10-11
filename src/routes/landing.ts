@@ -177,7 +177,25 @@ export function renderLandingPage(c: Context): Response {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 1rem;
       margin-bottom: 3.5rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .pagination[hidden] { display: none; }
+
+    .pagination button:disabled {
+      opacity: 0.4;
+      cursor: default;
     }
 
     .model-card {
@@ -366,6 +384,12 @@ export function renderLandingPage(c: Context): Response {
         .join("")}
     </div>
 
+    <nav class="pagination" aria-label="Model list pagination" hidden>
+      <button class="tab-btn" id="previousPage" onclick="changePage(-1)" aria-controls="modelsGrid">Previous</button>
+      <span id="pageStatus" role="status" aria-live="polite"></span>
+      <button class="tab-btn" id="nextPage" onclick="changePage(1)" aria-controls="modelsGrid">Next</button>
+    </nav>
+
     <h2>How x402 Micropayments Work</h2>
     <div class="flow-steps">
       <div class="step-card">
@@ -432,18 +456,39 @@ export function renderLandingPage(c: Context): Response {
   </div>
 
   <script>
-    function filterModality(modality, btn) {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const cards = document.querySelectorAll('.model-card');
-      cards.forEach(card => {
-        if (modality === 'all' || card.dataset.modality === modality) {
-          card.style.display = 'flex';
-        } else {
-          card.style.display = 'none';
-        }
-      });
+    const pageSize = 12;
+    let currentPage = 1;
+    let currentModality = 'all';
+    const modelCards = Array.from(document.querySelectorAll('.model-card'));
+
+    function renderModels() {
+      const filtered = modelCards.filter(card => currentModality === 'all' || card.dataset.modality === currentModality);
+      const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+      currentPage = Math.min(Math.max(1, currentPage), pageCount);
+      const start = (currentPage - 1) * pageSize;
+      modelCards.forEach(card => { card.style.display = 'none'; });
+      filtered.slice(start, start + pageSize).forEach(card => { card.style.display = 'flex'; });
+      document.getElementById('previousPage').disabled = currentPage === 1;
+      document.getElementById('nextPage').disabled = currentPage === pageCount;
+      document.getElementById('pageStatus').textContent = filtered.length
+        ? 'Showing ' + (start + 1) + '–' + Math.min(start + pageSize, filtered.length) + ' of ' + filtered.length + ' models · Page ' + currentPage + ' of ' + pageCount
+        : 'No models available';
     }
+
+    function changePage(direction) {
+      currentPage += direction;
+      renderModels();
+    }
+
+    function filterModality(modality, btn) {
+      document.querySelectorAll('.tabs .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentModality = modality;
+      currentPage = 1;
+      renderModels();
+    }
+    document.querySelector('.pagination').hidden = false;
+    renderModels();
   </script>
 </body>
 </html>`;
