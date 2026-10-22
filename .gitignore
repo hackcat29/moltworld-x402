@@ -22,3 +22,6 @@ scripts/swapAndWithdrawMerchantAlgo.ts
 scripts/withdrawMerchantUsdc.ts
 scripts/checkFleetBalances.ts
 *fleet_addresses*
+
+# UI test screenshots
+ui-artifacts/
