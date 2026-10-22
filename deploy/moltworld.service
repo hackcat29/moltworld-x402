@@ -1,21 +1,25 @@
 [Unit]
-Description=Moltworld x402 AI Model Gateway
-After=network.target docker.service
-Wants=docker.service
+Description=Moltworld x402 AI Gateway
+After=network-online.target docker.service
+Wants=network-online.target docker.service
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/opt/moltworld-x402
-EnvironmentFile=/opt/moltworld-x402/.env
-ExecStart=/usr/bin/node /opt/moltworld-x402/dist/server.js
+WorkingDirectory=/opt/moltworld
+EnvironmentFile=/opt/moltworld/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/moltworld/dist/server.js
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
-TimeoutStopSec=15
+TimeoutStopSec=20
 StandardOutput=journal
 StandardError=journal
 LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target

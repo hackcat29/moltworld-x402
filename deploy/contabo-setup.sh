@@ -2,122 +2,116 @@
 set -euo pipefail
 
 # ==============================================================================
-# Moltworld x402 Gateway - Contabo VPS Automated Provisioning Script
-# ==============================================================================
-# Target OS: Ubuntu 22.04+ / Debian 12+ on Contabo VPS
-# Architecture: Cloudflare (DNS + SSL + CDN) -> Contabo VPS (Nginx + Node.js 22/24 + Docker: Postgres 16 & Redis 7 + systemd)
+# Moltworld x402 Gateway: VPS provisioning (Ubuntu 22.04+ / Debian 12+)
+# Cloudflare (DNS + TLS) -> Nginx -> Node 22 gateway (systemd) -> PostgreSQL 16 + Redis 7 (Docker)
+# Safe to re-run: existing secrets in .env are kept.
 # ==============================================================================
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+APP_DIR="/opt/moltworld"
+REPO_URL="https://github.com/hackcat29/moltworld-x402.git"
+ENV_FILE="$APP_DIR/.env"
 
-echo -e "${BLUE}======================================================${NC}"
-echo -e "${BLUE}  Moltworld x402 Gateway - Contabo VPS Setup          ${NC}"
-echo -e "${BLUE}======================================================${NC}\n"
+log() { echo -e "\033[0;32m==> $*\033[0m"; }
+warn() { echo -e "\033[1;33m!!  $*\033[0m"; }
 
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}[ERROR] Please run this script as root (or via sudo).${NC}"
+  echo "Run as root (or via sudo)." >&2
   exit 1
 fi
 
-APP_DIR="/opt/moltworld-x402"
-REPO_URL="https://github.com/hackcat29/moltworld-x402.git"
+log "Installing system packages"
+apt-get update
+apt-get install -y curl git ufw nginx jq openssl ca-certificates docker.io
+apt-get install -y docker-compose-v2 || apt-get install -y docker-compose-plugin || true
+systemctl enable --now docker
 
-echo -e "${GREEN}[1/9] Updating system packages & installing core tooling...${NC}"
-apt update && apt upgrade -y
-apt install -y curl git ufw nginx jq certbot python3-certbot-nginx docker.io docker-compose-v2 || apt install -y docker-compose
-
-systemctl enable docker
-systemctl start docker
-
-echo -e "\n${GREEN}[2/9] Installing Node.js 22 LTS & pnpm...${NC}"
-if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1 | tr -d 'v')" -lt 20 ]; then
+log "Installing Node.js 22 and pnpm"
+if ! command -v node >/dev/null || [ "$(node -v | cut -d. -f1 | tr -d v)" -lt 22 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt install -y nodejs
+  apt-get install -y nodejs
 fi
-
 corepack enable
-corepack prepare pnpm@latest --activate
-echo "Node version: $(node -v)"
-echo "pnpm version: $(pnpm -v)"
+corepack prepare pnpm@10 --activate
 
-echo -e "\n${GREEN}[3/9] Configuring UFW Firewall...${NC}"
+log "Firewall"
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp comment 'SSH'
-ufw allow 80/tcp comment 'HTTP'
-ufw allow 443/tcp comment 'HTTPS'
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
 ufw --force enable
 
-echo -e "\n${GREEN}[4/9] Setting up Application Directory: ${APP_DIR}...${NC}"
-if [ ! -d "$APP_DIR" ]; then
-  echo "Cloning repository..."
+log "Fetching the application into $APP_DIR"
+if [ ! -d "$APP_DIR/.git" ]; then
   git clone "$REPO_URL" "$APP_DIR"
 else
-  echo "Directory exists. Updating codebase..."
-  cd "$APP_DIR"
-  git pull origin main || true
+  git -C "$APP_DIR" fetch origin main && git -C "$APP_DIR" reset --hard origin/main
 fi
-
 cd "$APP_DIR"
 
-echo -e "\n${GREEN}[5/9] Starting PostgreSQL 16 & Redis 7 via Docker Compose...${NC}"
-docker compose -f deploy/docker-compose.yml up -d || docker-compose -f deploy/docker-compose.yml up -d
+log "Preparing $ENV_FILE"
+[ -f "$ENV_FILE" ] || cp .env.example "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+get_env() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
+set_env() {
+  if grep -qE "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
+}
+ensure_secret() {
+  local name="$1" value="$2"
+  if [ -z "$(get_env "$name")" ]; then set_env "$name" "$value"; echo "   generated $name"; fi
+}
 
-echo -e "\n${GREEN}[6/9] Installing dependencies and building TypeScript...${NC}"
+# Reuse the password of an existing database URL so an initialised volume keeps working.
+existing_db_pw="$(get_env DATABASE_URL | sed -nE 's|^postgres(ql)?://[^:]+:([^@]+)@.*|\2|p')"
+ensure_secret POSTGRES_PASSWORD "${existing_db_pw:-$(openssl rand -hex 24)}"
+ensure_secret REDIS_PASSWORD "$(openssl rand -hex 24)"
+ensure_secret RECEIPT_SIGNING_KEY "$(openssl rand -base64 32)"
+ensure_secret ADMIN_TOKEN "$(openssl rand -hex 32)"
+ensure_secret DATABASE_URL "postgres://moltworld:$(get_env POSTGRES_PASSWORD)@127.0.0.1:5432/moltworld"
+ensure_secret REDIS_URL "redis://:$(get_env REDIS_PASSWORD)@127.0.0.1:6379"
+
+log "Starting PostgreSQL and Redis"
+docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.yml up -d --wait
+
+log "Building"
 pnpm install --frozen-lockfile
 pnpm build
 
-if [ ! -f "$APP_DIR/.env" ]; then
-  echo -e "${YELLOW}[WARNING] .env not found. Copying .env.example...${NC}"
-  cp .env.example .env
-  echo -e "${YELLOW}>>> Please edit ${APP_DIR}/.env with your real provider keys and AVM_ADDRESS! <<<${NC}"
-fi
-
-echo -e "\n${GREEN}[7/9] Configuring Systemd Service...${NC}"
+log "Installing the systemd unit"
 cp deploy/moltworld.service /etc/systemd/system/moltworld.service
 systemctl daemon-reload
 systemctl enable moltworld
 
-echo -e "\n${GREEN}[8/9] Preparing SSL Certificate Directories...${NC}"
+log "Nginx"
 mkdir -p /etc/ssl/certs /etc/ssl/private
-
 if [ ! -f /etc/ssl/certs/moltworld.pem ]; then
-  echo -e "${YELLOW}Generating temporary self-signed SSL certificate for initial Nginx bootstrap...${NC}"
+  warn "No origin certificate found; creating a temporary self-signed one."
+  warn "Replace it with a Cloudflare Origin CA certificate (SSL/TLS > Origin Server) for Full (Strict)."
   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/ssl/private/moltworld.key \
-    -out /etc/ssl/certs/moltworld.pem \
-    -subj "/CN=moltworld.xyz"
-  echo -e "${YELLOW}Notice: For production, paste your Cloudflare Origin CA certificate into /etc/ssl/certs/moltworld.pem and key into /etc/ssl/private/moltworld.key.${NC}"
+    -keyout /etc/ssl/private/moltworld.key -out /etc/ssl/certs/moltworld.pem -subj "/CN=moltworld.xyz"
 fi
-
-echo -e "\n${GREEN}[9/9] Configuring Nginx Reverse Proxy...${NC}"
 cp deploy/nginx-moltworld.conf /etc/nginx/sites-available/moltworld
 ln -sf /etc/nginx/sites-available/moltworld /etc/nginx/sites-enabled/moltworld
 rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
 
-nginx -t
-systemctl restart nginx
+missing=()
+for key in AVM_ADDRESS OPENROUTER_API_KEY; do [ -n "$(get_env $key)" ] || missing+=("$key"); done
+if [ "$(get_env ALGORAND_NETWORK)" = "mainnet" ] && [ ${#missing[@]} -gt 0 ]; then
+  warn "Set ${missing[*]} in $ENV_FILE, then: systemctl restart moltworld"
+else
+  systemctl restart moltworld
+  sleep 3
+  curl -fsS http://127.0.0.1:3402/health | jq '{status, ready, network, ledger, enabled_models, receipts}' || journalctl -u moltworld -n 40 --no-pager
+fi
 
-# Restart application service
-systemctl restart moltworld
+cat <<EOF
 
-echo -e "\n${GREEN}======================================================${NC}"
-echo -e "${GREEN}  Moltworld x402 Provisioning Complete!               ${NC}"
-echo -e "${GREEN}======================================================${NC}"
-echo -e "Systemd Service:  systemctl status moltworld"
-echo -e "Application Logs: journalctl -u moltworld -f"
-echo -e "Database Status:  docker compose -f ${APP_DIR}/deploy/docker-compose.yml ps"
-echo -e "Nginx Status:     systemctl status nginx"
-echo -e "\nNext Steps:"
-echo -e "1. Edit ${APP_DIR}/.env with your production keys (OPENROUTER_API_KEY, FAL_KEY, AVM_ADDRESS)."
-echo -e "2. Restart Moltworld: systemctl restart moltworld"
-echo -e "3. In Cloudflare Dashboard:"
-echo -e "   - Point A record for moltworld.xyz to this VPS IP (Proxied / Orange Cloud)."
-echo -e "   - SSL/TLS encryption mode: Set to 'Full (Strict)'."
-echo -e "   - Paste Cloudflare Origin CA cert into /etc/ssl/certs/moltworld.pem and /etc/ssl/private/moltworld.key"
-echo -e "   - Then reload Nginx: systemctl reload nginx"
-echo -e "4. Verify health: curl -s https://moltworld.xyz/health | jq .\n"
+Provisioned. Next:
+  1. Edit $ENV_FILE: AVM_ADDRESS (revenue; can be cold/multisig), provider keys
+     (OPENROUTER_API_KEY, FAL_KEY, OPENAI_API_KEY, ELEVENLABS_API_KEY) and
+     PAYOUT_WALLET_MNEMONIC (hot wallet for refunds/rebates/creator payouts).
+  2. systemctl restart moltworld && curl -s localhost:3402/health | jq
+  3. Back up RECEIPT_SIGNING_KEY offline: losing it makes past receipts unverifiable
+     (rotate with RECEIPT_PREVIOUS_PUBLIC_KEYS, see docs/OPERATIONS.md).
+EOF

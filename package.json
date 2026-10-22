@@ -12,7 +12,7 @@
     "test:settle": "tsx scripts/setupAndSettleTestnet.ts",
     "build": "tsc && tsc -p sdk/js/tsconfig.json --noEmit",
     "start:prod": "node dist/server.js",
-    "deploy:contabo": "bash scripts/deploy.sh contabo",
+    "deploy:contabo": "bash scripts/deploy.sh",
     "mainnet:wallet": "tsx scripts/manageMainnetMerchant.ts",
     "stack:local": "tsx scripts/local-stack.ts",
     "typecheck": "tsc --noEmit && tsc -p sdk/js/tsconfig.json --noEmit",

@@ -1,24 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  // Pass-through only: all application logic runs on the VPS origin (see src/worker.ts).
   "name": "moltworld-x402",
   "main": "src/worker.ts",
   "compatibility_date": "2026-03-01",
-  "compatibility_flags": ["nodejs_compat"],
   "routes": [
-    {
-      "pattern": "moltworld.xyz/*",
-      "zone_name": "moltworld.xyz"
-    },
-    {
-      "pattern": "www.moltworld.xyz/*",
-      "zone_name": "moltworld.xyz"
-    }
-  ],
-  "vars": {
-    "ALGORAND_NETWORK": "mainnet",
-    "PUBLIC_DOMAIN": "https://moltworld.xyz",
-    "FACILITATOR_URL": "https://facilitator.goplausible.xyz",
-    "AVM_ADDRESS": "NAPHTASVPDGRYORRYM237OSPA26R2TRRG4XFRRFK7K5H64H6HIIIZZIIXY",
-    "MOCK_PROVIDERS": "false"
-  }
+    { "pattern": "moltworld.xyz/*", "zone_name": "moltworld.xyz" },
+    { "pattern": "www.moltworld.xyz/*", "zone_name": "moltworld.xyz" }
+  ]
 }

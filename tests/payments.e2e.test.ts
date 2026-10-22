@@ -466,10 +466,11 @@ describe("spending mandates", () => {
 describe("creator marketplace", () => {
   it("lists, reviews, sells and pays out a creator API", async () => {
     const creator = algosdk.generateAccount();
+    const slug = `weather-${crypto.randomBytes(4).toString("hex")}`;
     const listing = {
       action: "list",
       creator: creator.addr.toString(),
-      slug: "weather-oracle",
+      slug,
       name: "Weather Oracle",
       description: "Current weather for a city, as JSON.",
       upstream_url: "https://weather.example.com/v1/now",
@@ -483,7 +484,7 @@ describe("creator marketplace", () => {
     expect(view.status).toBe("pending");
 
     // Not sellable until reviewed.
-    expect((await appFetch(post("/v1/market/weather-oracle/call", { city: "Lagos" }))).status).toBe(404);
+    expect((await appFetch(post(`/v1/market/${slug}/call`, { city: "Lagos" }))).status).toBe(404);
 
     const forwarded: any[] = [];
     market.setCreatorFetcherForTests(async (url, init) => {
@@ -491,13 +492,13 @@ describe("creator marketplace", () => {
       return { status: 200, contentType: "application/json", body: new TextEncoder().encode(JSON.stringify({ tempC: 31 })) };
     });
     const pending = await (await appFetch(new Request("http://localhost/v1/ops/listings?status=pending", { headers: { Authorization: "Bearer test-admin-token" } }))).json();
-    const id = pending.data.find((l: any) => l.slug === "weather-oracle").id;
+    const id = pending.data.find((l: any) => l.slug === slug).id;
     expect(pending.data[0].signing_secret).toBeUndefined();
     const review = await appFetch(post(`/v1/ops/listings/${id}/review`, { status: "approved" }, { Authorization: "Bearer test-admin-token" }));
     expect(review.status).toBe(200);
 
     const payer = createPayer(harness, appFetch);
-    const res = await payer.fetch("http://localhost/v1/market/weather-oracle/call", {
+    const res = await payer.fetch(`http://localhost/v1/market/${slug}/call`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ city: "Lagos" }),
@@ -522,7 +523,7 @@ describe("creator marketplace", () => {
     const listing = {
       action: "list",
       creator: creator.addr.toString(),
-      slug: "internal-probe",
+      slug: `probe-${crypto.randomBytes(4).toString("hex")}`,
       name: "Probe",
       description: "Tries to reach metadata services.",
       upstream_url: "https://169.254.169.254/latest",
