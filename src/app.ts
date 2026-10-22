@@ -10,7 +10,8 @@ import {
   structuredLogger,
   safeErrorHandler,
 } from "./middleware/security.js";
-import { renderLandingPage } from "./routes/landing.js";
+import { registerSite } from "./site/pages.js";
+import { SITE_PATHS } from "./site/paths.js";
 import { handleLlmsTxt, handleX402Discovery } from "./routes/metadata.js";
 import { getAgentCard, handleA2a } from "./routes/a2a.js";
 import { createMcpRoute } from "./routes/mcp.js";
@@ -86,10 +87,10 @@ export function createApp(): { app: Hono; init: () => Promise<void> } {
   );
 
   // Free endpoints
-  for (const path of ["/", "/health", "/v1/models", "/v1/quote", "/v1/stats", "/v1/jobs/*", "/v1/receipts/*", "/v1/mandates", "/v1/mandates/*", "/v1/market", "/v1/market/listings", "/v1/market/listings/*", "/v1/market/creators/*", "/.well-known/*", "/llms.txt", "/a2a", "/mcp"]) {
+  for (const path of [...SITE_PATHS, "/health", "/v1/models", "/v1/quote", "/v1/stats", "/v1/jobs/*", "/v1/receipts/*", "/v1/mandates", "/v1/mandates/*", "/v1/market", "/v1/market/listings", "/v1/market/listings/*", "/v1/market/creators/*", "/.well-known/*", "/llms.txt", "/a2a", "/mcp"]) {
     app.use(path, rateLimitFreeRoutesMiddleware);
   }
-  app.get("/", renderLandingPage);
+  registerSite(app);
   app.get("/health", handleHealth);
   app.get("/v1/models", handleListModels);
   app.post("/v1/quote", handleQuote);

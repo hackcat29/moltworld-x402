@@ -181,5 +181,5 @@ Provisioned without Docker. Next:
      PAYOUT_WALLET_MNEMONIC (hot wallet for refunds/rebates/creator payouts).
   2. systemctl restart moltworld && curl -s localhost:3402/health | jq
   3. Back up RECEIPT_SIGNING_KEY offline: losing it makes past receipts unverifiable
-     (rotate with RECEIPT_PREVIOUS_PUBLIC_KEYS, see docs/OPERATIONS.md).
+     (rotate with RECEIPT_PREVIOUS_PUBLIC_KEYS, see ops/OPERATIONS.md).
 EOF

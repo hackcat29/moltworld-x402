@@ -25,6 +25,7 @@ export interface GatewayConfig {
   env: string;
   port: number;
   publicDomain: string;
+  docsUrl: string;
   facilitatorUrl: string;
   isMainnet: boolean;
   networkCaip2: Network;
@@ -83,6 +84,7 @@ export const config: GatewayConfig = {
   env: process.env.NODE_ENV || "development",
   port: parseInt(process.env.PORT || "3000", 10),
   publicDomain: (process.env.PUBLIC_DOMAIN || "https://moltworld.xyz").replace(/\/+$/, ""),
+  docsUrl: (process.env.DOCS_URL || "https://docs.moltworld.xyz").replace(/\/+$/, ""),
   facilitatorUrl: process.env.FACILITATOR_URL || "https://facilitator.goplausible.xyz",
   isMainnet,
   networkCaip2: (isMainnet

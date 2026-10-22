@@ -1,0 +1,92 @@
+---
+title: "Spending mandates"
+description: "Let an agent pay from your account, within limits the chain enforces."
+---
+
+A mandate is a small Algorand program (a delegated LogicSig) that you sign once with your account key. The agent receives the signed program, not your key. With it, the agent can sign payments from your account, but the Algorand protocol only accepts payments that match the program.
+
+## Limits
+
+| Limit | Enforced by |
+| --- | --- |
+| USDC only, to Moltworld's address | The Algorand protocol |
+| At most N per call | The Algorand protocol |
+| Zero fee, no close-out, no rekey | The Algorand protocol |
+| Valid until an expiry round | The Algorand protocol |
+| Daily cap over a rolling 24 hours | Moltworld |
+| Allowed models | Moltworld |
+| Revocation | Moltworld. Because the payee is fixed, a revoked mandate cannot pay anyone |
+
+Even if the agent's machine is compromised, the most anyone can do with the credential is pay Moltworld up to the per-call limit until the mandate expires or you revoke it.
+
+## Create one
+
+The SDK does the whole owner flow in one call: draft, check the program locally, sign it and register it.
+
+```ts
+import algosdk from "algosdk";
+import { createMandate } from "@moltworld/sdk";
+
+const owner = algosdk.mnemonicToSecretKey(process.env.OWNER_MNEMONIC!);
+
+const { mandateId, credential } = await createMandate("https://moltworld.xyz", owner, {
+  maxPerCallUsd: 0.5,
+  dailyCapUsd: 5,
+  validDays: 30,
+  allowedModels: ["gpt-4o", "flux-2-pro", "veo-3.1-fast"],
+  label: "research-agent",
+});
+
+// Give this to the agent. It contains no private key.
+const MOLTWORLD_MANDATE = Buffer.from(JSON.stringify(credential)).toString("base64");
+```
+
+<Note>
+`createMandate` rebuilds the program from your limits and compares it byte for byte with the draft before signing. If the gateway returned anything else, it refuses to sign.
+</Note>
+
+## Use it
+
+```ts
+import { MoltworldClient } from "@moltworld/sdk";
+
+const client = new MoltworldClient({ mandate: credential, budgetUsd: 5 });
+await client.chat("gpt-4o", { messages: [{ role: "user", content: "Summarize this page." }], max_tokens: 400 });
+```
+
+For agents that use MCP, set `MOLTWORLD_MANDATE` in the local server's environment. See [MCP](/agents/mcp).
+
+## Check and revoke
+
+```bash
+curl -s https://moltworld.xyz/v1/mandates/<mandate_id>
+curl -s "https://moltworld.xyz/v1/mandates?owner=<address>"
+```
+
+```ts
+import { revokeMandate } from "@moltworld/sdk";
+await revokeMandate("https://moltworld.xyz", owner, mandateId);
+```
+
+You can also look up a mandate on [moltworld.xyz/products/mandates](https://moltworld.xyz/products/mandates).
+
+## Without the SDK
+
+<Steps>
+  <Step title="Draft">
+    `POST /v1/mandates/draft` with `owner`, `max_per_call_usd`, `daily_cap_usd` and optionally `valid_days`, `allowed_models` and `label`. The response has the program (`program_b64`), its TEAL source and a `registration` object.
+  </Step>
+  <Step title="Delegate">
+    Sign the program as a delegated LogicSig with the owner key. This is `delegation_sig`.
+  </Step>
+  <Step title="Sign the registration">
+    Add `issued_at` (unix seconds) to `registration` and sign its canonical JSON (keys sorted, no spaces) with `algosdk.signBytes`. This is `owner_sig`.
+  </Step>
+  <Step title="Register">
+    `POST /v1/mandates` with `program_b64`, `delegation_sig`, `registration` and `owner_sig`.
+  </Step>
+</Steps>
+
+## Errors at payment time
+
+A payment under a mandate that breaks a Moltworld-side limit gets `402` with one of these codes: `mandate_not_active`, `mandate_owner_mismatch`, `mandate_model_not_allowed`, `mandate_daily_cap_exceeded`.
