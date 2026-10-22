@@ -1,13 +1,14 @@
 [Unit]
 Description=Moltworld x402 AI Model Gateway
-After=network.target
+After=network.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/moltworld
-EnvironmentFile=/opt/moltworld/.env
-ExecStart=/usr/bin/node /opt/moltworld/dist/server.js
+WorkingDirectory=/opt/moltworld-x402
+EnvironmentFile=/opt/moltworld-x402/.env
+ExecStart=/usr/bin/node /opt/moltworld-x402/dist/server.js
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM

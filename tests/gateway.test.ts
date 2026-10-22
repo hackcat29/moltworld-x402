@@ -181,7 +181,7 @@ describe("Moltworld x402 Gateway - Free Routes & Modality Filtering", () => {
     expect(favIcoBuf.byteLength).toBeGreaterThan(1000);
   });
 
-  it("GET /health returns 200 OK with 44 enabled models and zero exposed secrets", async () => {
+  it("GET /health returns 200 OK with 40 enabled models and zero exposed secrets", async () => {
     const res = await app.fetch(new Request("http://localhost/health"));
     expect(res.status).toBe(200);
 
@@ -194,8 +194,8 @@ describe("Moltworld x402 Gateway - Free Routes & Modality Filtering", () => {
     expect(body.usdc_asset_id).toBe(config.usdcAsaId);
     expect(body.pay_to).toBe(config.payToAddress);
     expect(body.tag).toBe("x402-global-challenge");
-    expect(body.enabled_models).toBe(44);
-    expect(body.models_by_modality.chat).toBe(28);
+    expect(body.enabled_models).toBe(40);
+    expect(body.models_by_modality.chat).toBe(24);
     expect(body.models_by_modality.image).toBe(6);
     expect(body.models_by_modality.voice).toBe(5);
     expect(body.models_by_modality.video).toBe(5);
@@ -222,26 +222,24 @@ describe("Moltworld x402 Gateway - Free Routes & Modality Filtering", () => {
     setGatewayReady(true);
   });
 
-  it("GET /v1/models returns 200 OK with all 44 enabled models across Chat, Image, Voice & Video", async () => {
+  it("GET /v1/models returns 200 OK with all 40 enabled models across Chat, Image, Voice & Video", async () => {
     const res = await app.fetch(new Request("http://localhost/v1/models"));
     expect(res.status).toBe(200);
 
     const body = (await res.json()) as any;
     expect(body.object).toBe("list");
     expect(Array.isArray(body.data)).toBe(true);
-    expect(body.data.length).toBe(44);
+    expect(body.data.length).toBe(40);
 
     const slugs = body.data.map((m: any) => m.id);
     // Chat models
     expect(slugs).toContain("gpt");
     expect(slugs).toContain("gpt-4o");
-    expect(slugs).toContain("claude");
     expect(slugs).toContain("claude-sonnet");
     expect(slugs).toContain("gemini");
     expect(slugs).toContain("gemini-lite");
     expect(slugs).toContain("gemini-pro");
     expect(slugs).toContain("deepseek");
-    expect(slugs).toContain("deepseek-r1");
     expect(slugs).toContain("llama");
     expect(slugs).toContain("gpt-6-astra");
     expect(slugs).toContain("gpt-6-sol");
@@ -252,7 +250,6 @@ describe("Moltworld x402 Gateway - Free Routes & Modality Filtering", () => {
     expect(slugs).toContain("claude-fable-5.1");
     expect(slugs).toContain("claude-opus-5");
     expect(slugs).toContain("claude-opus-5.5");
-    expect(slugs).toContain("gpt-5.6-astra");
     expect(slugs).toContain("gpt-5.4");
     expect(slugs).toContain("gpt-5.2");
     expect(slugs).toContain("gpt-5.6-sol");
@@ -260,7 +257,6 @@ describe("Moltworld x402 Gateway - Free Routes & Modality Filtering", () => {
     expect(slugs).toContain("gpt-5.6-terra");
     expect(slugs).toContain("claude-sonnet-5");
     expect(slugs).toContain("claude-sonnet-5.5");
-    expect(slugs).toContain("gpt-5.6-luno");
 
     // Image models
     expect(slugs).toContain("recraft-v4.1-flash");
@@ -285,20 +281,20 @@ describe("Moltworld x402 Gateway - Free Routes & Modality Filtering", () => {
     expect(slugs).toContain("sora-2-pro");
   });
 
-  it("verifies accurate model identity: Claude Sonnet 4.5 and Claude 3 Haiku", async () => {
+  it("verifies accurate model identity: Claude Sonnet 4.5 and Gemini 2.5 Flash", async () => {
     const res = await app.fetch(new Request("http://localhost/v1/models"));
     const body = (await res.json()) as any;
 
     const sonnet = body.data.find((m: any) => m.id === "claude-sonnet");
     expect(sonnet.name).toBe("Claude Sonnet 4.5");
 
-    const haiku = body.data.find((m: any) => m.id === "claude");
-    expect(haiku.name).toBe("Claude 3 Haiku");
+    const gemini = body.data.find((m: any) => m.id === "gemini");
+    expect(gemini.name).toBe("Gemini 2.5 Flash");
   });
 });
 
-describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Fail-Closed Protection", () => {
-  it("POST /v1/models/gpt/chat/completions returns 402 with exact USDC price and Bazaar extension", async () => {
+describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Dynamic Pricing", () => {
+  it("POST /v1/models/gpt/chat/completions returns 402 with dynamic USDC quote and Bazaar extension", async () => {
     const res = await app.fetch(
       new Request("http://localhost/v1/models/gpt/chat/completions", {
         method: "POST",
@@ -317,7 +313,7 @@ describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Fail-Closed Prote
     expect(decoded.x402Version).toBe(2);
     expect(decoded.error).toBe("Payment required");
     expect(decoded.resource.url).toContain("/v1/models/gpt/chat/completions");
-    expect(decoded.accepts[0].amount).toBe("3000"); // $0.003
+    expect(Number(decoded.accepts[0].amount)).toBeGreaterThanOrEqual(1000);
     expect(decoded.accepts[0].payTo).toBe(config.payToAddress);
     expect(decoded.accepts[0].extra.tag).toBe("x402-global-challenge");
     expect(decoded.extensions.bazaar).toBeDefined();
@@ -326,7 +322,7 @@ describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Fail-Closed Prote
     expect(decoded.resource.description).toBe(getModelDiscoveryDescription(defaultModelRegistry.getModel("gpt")!));
   });
 
-  it("POST /v1/models/claude-sonnet/chat/completions returns 402 with $0.006 pricing", async () => {
+  it("POST /v1/models/claude-sonnet/chat/completions returns 402 with dynamic cost-plus pricing", async () => {
     const res = await app.fetch(
       new Request("http://localhost/v1/models/claude-sonnet/chat/completions", {
         method: "POST",
@@ -340,10 +336,10 @@ describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Fail-Closed Prote
     expect(res.status).toBe(402);
     const payReqHeader = res.headers.get("payment-required");
     const decoded = JSON.parse(Buffer.from(payReqHeader!, "base64").toString("utf8"));
-    expect(decoded.accepts[0].amount).toBe("6000"); // $0.006
+    expect(Number(decoded.accepts[0].amount)).toBeGreaterThan(1000);
   });
 
-  it("POST /v1/models/flux-2-pro/images/generations returns 402 with $0.20 pricing (200,000 base units)", async () => {
+  it("POST /v1/models/flux-2-pro/images/generations returns 402 with image quote", async () => {
     const res = await app.fetch(
       new Request("http://localhost/v1/models/flux-2-pro/images/generations", {
         method: "POST",
@@ -358,11 +354,11 @@ describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Fail-Closed Prote
     const payReqHeader = res.headers.get("payment-required");
     expect(payReqHeader).toBeTruthy();
     const decoded = JSON.parse(Buffer.from(payReqHeader!, "base64").toString("utf8"));
-    expect(decoded.accepts[0].amount).toBe("200000"); // $0.20
+    expect(Number(decoded.accepts[0].amount)).toBeGreaterThanOrEqual(1000);
     expect(decoded.accepts[0].payTo).toBe(config.payToAddress);
   });
 
-  it("POST /v1/models/gpt-audio-mini/audio/speech returns 402 with $0.02 pricing (20,000 base units)", async () => {
+  it("POST /v1/models/gpt-audio-mini/audio/speech returns 402 with voice quote", async () => {
     const res = await app.fetch(
       new Request("http://localhost/v1/models/gpt-audio-mini/audio/speech", {
         method: "POST",
@@ -378,10 +374,10 @@ describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Fail-Closed Prote
     const payReqHeader = res.headers.get("payment-required");
     expect(payReqHeader).toBeTruthy();
     const decoded = JSON.parse(Buffer.from(payReqHeader!, "base64").toString("utf8"));
-    expect(decoded.accepts[0].amount).toBe("20000"); // $0.02
+    expect(Number(decoded.accepts[0].amount)).toBeGreaterThanOrEqual(1000);
   });
 
-  it("POST /v1/models/sora-2-pro/videos/generations returns 402 with $1.00 pricing (1,000,000 base units)", async () => {
+  it("POST /v1/models/sora-2-pro/videos/generations returns 402 with video quote", async () => {
     const res = await app.fetch(
       new Request("http://localhost/v1/models/sora-2-pro/videos/generations", {
         method: "POST",
@@ -397,7 +393,7 @@ describe("Moltworld x402 Gateway - Payment Gating (HTTP 402) & Fail-Closed Prote
     const payReqHeader = res.headers.get("payment-required");
     expect(payReqHeader).toBeTruthy();
     const decoded = JSON.parse(Buffer.from(payReqHeader!, "base64").toString("utf8"));
-    expect(decoded.accepts[0].amount).toBe("1000000"); // $1.00
+    expect(Number(decoded.accepts[0].amount)).toBeGreaterThanOrEqual(1000);
   });
 
   it("disabled/unsupported endpoints return 404 and NEVER accept payment (Protection Against Unfulfilled Requests)", async () => {

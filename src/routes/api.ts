@@ -2,7 +2,7 @@ import { Context } from "hono";
 import fs from "fs";
 import path from "path";
 import { config } from "../config.js";
-import { defaultModelRegistry, getModelEndpoint, getModelDiscoveryDescription } from "../models/registry.js";
+import { defaultModelRegistry, getModelEndpoint } from "../models/registry.js";
 import { defaultProviderRegistry } from "../providers/index.js";
 import {
   validateChatCompletionRequest,
@@ -102,7 +102,7 @@ export function handleListModels(c: Context): Response {
 
   return c.json({
     object: "list",
-data: models.map((m) => {
+    data: models.map((m) => {
       const baseQuote = calculateRequestQuote(m);
       return {
         id: m.slug,
@@ -115,10 +115,151 @@ data: models.map((m) => {
         max_tokens: m.limits.maxOutputTokens,
         max_input_tokens: m.limits.maxInputTokens,
         max_duration_seconds: m.limits.maxDurationSeconds,
-        description: getModelDiscoveryDescription(m),
+        description: m.description,
         tags: m.tags || [],
       };
     }),
+  });
+}
+
+export async function handleQuote(c: Context): Promise<Response> {
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+
+  const modelSlug = body.model || c.req.query("model") || "gpt";
+  const model = defaultModelRegistry.getModel(modelSlug);
+  if (!model || !model.enabled) {
+    return c.json(
+      {
+        error: {
+          message: `Model '${modelSlug}' is not found or is disabled.`,
+          type: "invalid_request_error",
+          code: "model_not_found",
+        },
+      },
+      404
+    );
+  }
+
+  const quote = calculateRequestQuote(model, body);
+  return c.json({
+    model: model.slug,
+    name: model.displayName,
+    modality: model.modality,
+    quote,
+  });
+}
+
+export async function handleStats(c: Context): Promise<Response> {
+  const operatorWallets = loadOperatorWallets();
+  const stats = await dbStore.getStats(operatorWallets);
+
+  return c.json({
+    product: "Moltworld x402 AI Gateway",
+    network: config.isMainnet ? "mainnet" : "testnet",
+    metrics: {
+      client_requests: stats.totalRequests,
+      completed_requests: stats.completedRequests,
+      failed_requests: stats.failedRequests,
+      client_gmv_usdc: stats.totalGmvUsdc,
+      upstream_cost_usd: stats.totalUpstreamCostUsd,
+      gross_profit_usd: parseFloat((stats.totalGmvUsdc - stats.totalUpstreamCostUsd).toFixed(4)),
+      unique_paying_wallets: stats.uniquePayers,
+      repeat_payer_rate: stats.repeatPayerRate,
+      operator_test_traffic_requests: stats.operatorTestRequests,
+    },
+    reporting_policy:
+      "All operator-controlled fleet and merchant wallets are segregated and excluded from organic metrics.",
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export async function handleGetJob(c: Context): Promise<Response> {
+  const jobId = c.req.param("id");
+  if (!jobId) {
+    return c.json({ error: "Job ID is required" }, 400);
+  }
+
+  const job = await dbStore.getJobById(jobId);
+  if (!job) {
+    return c.json({ error: "Job not found" }, 404);
+  }
+
+  // Live polling for fal video jobs
+  if (job.status === "processing" && defaultProviderRegistry.hasProvider("fal")) {
+    const falProvider = defaultProviderRegistry.getProvider("fal") as any;
+    if (falProvider?.checkVideoStatus) {
+      try {
+        const model = defaultModelRegistry.getModel(job.model_slug);
+        const upstreamId = model?.upstreamModelId || "fal-ai/kling-video/v1/standard/text-to-video";
+        const statusResult = await falProvider.checkVideoStatus(upstreamId, job.id);
+        if (statusResult.status === "COMPLETED" && statusResult.videoUrl) {
+          job.status = "completed";
+          job.video_url = statusResult.videoUrl;
+          await dbStore.saveJob(job);
+        } else if (statusResult.status === "FAILED") {
+          job.status = "failed";
+          job.error_message = statusResult.error || "Video generation failed upstream";
+          await dbStore.saveJob(job);
+        }
+      } catch (err: any) {
+        console.warn("Could not check fal job status:", err.message);
+      }
+    }
+  }
+
+  return c.json({
+    id: job.id,
+    object: "video.job",
+    status: job.status,
+    model: job.model_slug,
+    video_url: job.video_url || null,
+    error: job.error_message || null,
+    created_at: job.created_at,
+  });
+}
+
+export async function handleGetReceipt(c: Context): Promise<Response> {
+  const receiptId = c.req.param("id");
+  if (!receiptId) {
+    return c.json({ error: "Missing receipt ID" }, 400);
+  }
+  const reqRecord = await dbStore.getRequestById(receiptId);
+  if (!reqRecord || !reqRecord.response_hash) {
+    return c.json({ error: "Receipt not found or request not completed" }, 404);
+  }
+
+  const receipt = receiptService.signReceipt({
+    requestId: reqRecord.id,
+    txid: reqRecord.txid || "00000000000000000000000000000000",
+    network: reqRecord.network,
+    payer: reqRecord.payer_address,
+    payTo: reqRecord.pay_to_address,
+    amountUsd: `$${reqRecord.quote_amount_usd.toFixed(6)}`,
+    amountMicroUsdc: Number(reqRecord.quote_microusdc),
+    modelSlug: reqRecord.model_slug,
+    modality: reqRecord.modality,
+    upstreamProvider: reqRecord.upstream_provider || "unknown",
+    upstreamModel: reqRecord.upstream_model || "unknown",
+    requestSha256: reqRecord.request_hash,
+    responseSha256: reqRecord.response_hash,
+  });
+
+  return c.json({ receipt, verified: receiptService.verifyReceipt(receipt) });
+}
+
+export function handleReceiptPublicKey(c: Context): Response {
+  return c.json({
+    algorithm: "Ed25519",
+    format: "spki-der-base64",
+    publicKey: receiptService.getPublicKeyBase64(),
+    gateway: config.publicDomain,
+    payTo: config.payToAddress,
+    verification: "Canonical JSON signed with Ed25519; verified via public key",
   });
 }
 

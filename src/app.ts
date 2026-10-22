@@ -20,6 +20,11 @@ import {
   handleImageGeneration,
   handleAudioSpeech,
   handleVideoGeneration,
+  handleQuote,
+  handleStats,
+  handleGetJob,
+  handleGetReceipt,
+  handleReceiptPublicKey,
   setGatewayReady,
 } from "./routes/api.js";
 import { defaultModelRegistry } from "./models/registry.js";
@@ -53,10 +58,12 @@ export function createApp(): {
         "Payment-Signature",
         "Payment-Required",
         "x-request-id",
+        "idempotency-key",
       ],
       exposeHeaders: [
         "Payment-Required",
         "Payment-Response",
+        "Moltworld-Receipt",
         "x-request-id",
         "Content-Type",
       ],
@@ -68,16 +75,24 @@ export function createApp(): {
   app.use("/", rateLimitFreeRoutesMiddleware);
   app.use("/health", rateLimitFreeRoutesMiddleware);
   app.use("/v1/models", rateLimitFreeRoutesMiddleware);
+  app.use("/v1/stats", rateLimitFreeRoutesMiddleware);
+  app.use("/v1/quote", rateLimitFreeRoutesMiddleware);
+  app.use("/v1/jobs/*", rateLimitFreeRoutesMiddleware);
+  app.use("/v1/receipts/*", rateLimitFreeRoutesMiddleware);
+  app.use("/.well-known/*", rateLimitFreeRoutesMiddleware);
   app.use("/llms.txt", rateLimitFreeRoutesMiddleware);
-  app.use("/.well-known/x402", rateLimitFreeRoutesMiddleware);
-  app.use("/.well-known/agent-card.json", rateLimitFreeRoutesMiddleware);
   app.use("/a2a", rateLimitFreeRoutesMiddleware);
   app.use("/mcp", rateLimitFreeRoutesMiddleware);
 
-  // Free Endpoints
+  // Free Public Endpoints
   app.get("/", renderLandingPage);
   app.get("/health", handleHealth);
   app.get("/v1/models", handleListModels);
+  app.post("/v1/quote", handleQuote);
+  app.get("/v1/stats", handleStats);
+  app.get("/v1/jobs/:id", handleGetJob);
+  app.get("/v1/receipts/:id", handleGetReceipt);
+  app.get("/.well-known/moltworld-receipts.json", handleReceiptPublicKey);
   app.get("/llms.txt", handleLlmsTxt);
   app.get("/.well-known/x402", handleX402Discovery);
   app.get("/.well-known/agent-card.json", (c) => c.json(getAgentCard(), 200, { "Cache-Control": "public, max-age=300" }));

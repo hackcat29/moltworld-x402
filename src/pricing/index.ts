@@ -78,8 +78,12 @@ export function calculateRequestQuote(model: ModelDefinition, body?: any): Price
     }
   }
 
-  // Cost plus margin
-  const finalPrice = Math.max(config.priceMinFloor, rawCost * (1 + margin));
+  // Parse model base price floor
+  const baseMatch = /^\$(\d+)(?:\.(\d+))?$/.exec(model.price);
+  const basePriceUsd = baseMatch ? parseFloat(`${baseMatch[1]}.${baseMatch[2] || "0"}`) : 0;
+
+  // Cost plus margin, clamped to model base price and global floor
+  const finalPrice = Math.max(config.priceMinFloor, basePriceUsd, rawCost * (1 + margin));
   const microUsdc = Math.ceil(finalPrice * 1_000_000);
   const formattedPrice = formatUsdcPrice(finalPrice);
 
