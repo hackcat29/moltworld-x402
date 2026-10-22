@@ -90,6 +90,16 @@ jobs:
           script: |
             set -e
             cd /opt/moltworld
+            # Preflight: this version refuses to start on mainnet without a ledger and a
+            # persistent receipt key. Stop here, leaving the running version untouched.
+            if grep -q '^ALGORAND_NETWORK=mainnet' .env; then
+              for key in DATABASE_URL RECEIPT_SIGNING_KEY; do
+                if ! grep -q "^$key=." .env; then
+                  echo "::error::$key is missing from /opt/moltworld/.env. Run deploy/contabo-setup.sh on the VPS first. Nothing was changed."
+                  exit 1
+                fi
+              done
+            fi
             git fetch origin main
             git reset --hard origin/main
             # Datastores first: the gateway refuses to start on mainnet without its ledger.

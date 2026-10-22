@@ -4,7 +4,7 @@ import { defaultModelRegistry, getModelEndpoint, ModelDefinition } from "../mode
 import { quoteRequest, referenceRequest } from "../pricing/index.js";
 import { defaultProviderRegistry } from "../providers/index.js";
 
-const TITLE = "Moltworld — Multimodal AI Gateway with x402 on Algorand";
+const TITLE = "Moltworld | Multimodal AI Gateway with x402 on Algorand";
 const DESCRIPTION =
   "Pay-per-request AI for apps and autonomous agents. Chat, image, voice and video models, paid per call in USDC on Algorand via x402, with signed receipts and on-chain refunds.";
 
@@ -62,7 +62,7 @@ export function renderLandingPage(c: Context): Response {
             <span class="chip">${esc(m.provider)}</span>
             <span class="chip mono" title="Upstream model id">${esc(m.upstream)}</span>
           </div>
-          <p class="flow">${m.flow === "authorization" ? "Settles after the answer · unused tokens rebated" : "Settles first · refunded on failure"}</p>
+          <p class="flow">${m.flow === "authorization" ? "Charged after the answer; unused tokens paid back" : "Charged first; refunded if it fails"}</p>
           <code class="endpoint">POST ${esc(m.endpoint)}</code>
           <div class="model-actions">
             <button type="button" class="btn btn-small" data-quote="${esc(m.slug)}">Get exact quote</button>
@@ -123,39 +123,20 @@ export function renderLandingPage(c: Context): Response {
     .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 64px; }
     .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
     .brand img { width: 32px; height: 32px; border-radius: 8px; }
-    nav.primary ul { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
-    nav.primary a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 8px 10px; border-radius: 8px; display: block; }
-    nav.primary a:hover { color: var(--text); background: var(--card); }
-    .net { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
-    .dot.ok { background: var(--accent); box-shadow: 0 0 8px var(--accent); } .dot.bad { background: var(--danger); }
-    .menu-btn { display: none; background: none; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; font: inherit; }
-    @media (max-width: 900px) {
-      .menu-btn { display: inline-flex; }
-      nav.primary { position: fixed; inset: 64px 0 auto 0; background: var(--bg); border-bottom: 1px solid var(--border); display: none; }
-      nav.primary.open { display: block; }
-      nav.primary ul { flex-direction: column; padding: 8px var(--gutter) 16px; }
-      nav.primary a { font-size: 16px; padding: 12px; }
-      .net .label { display: none; }
-    }
+    .net { font-size: 13px; color: var(--muted); white-space: nowrap; } .net.down { color: var(--danger); }
+    ol.steps { margin: 0; padding-left: 22px; max-width: 75ch; color: var(--muted); } ol.steps li { margin: 0 0 10px; }
+    dl.stats { max-width: 520px; } dl.stats dd { font-size: 15px; }
 
     /* Hero */
     .hero { padding-top: 64px; padding-bottom: 40px; text-align: center; }
-    .eyebrow { display: inline-block; max-width: 100%; font-family: var(--mono); font-size: 12px; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); padding: 4px 12px; border-radius: 999px; }
     h1 { font-size: clamp(32px, 6vw, 56px); line-height: 1.08; letter-spacing: -0.02em; margin: 18px auto 14px; max-width: 18ch; }
     .lede { color: var(--muted); font-size: clamp(16px, 2.2vw, 19px); max-width: 62ch; margin: 0 auto 26px; }
-    .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
     .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 18px; border-radius: 10px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font: 600 15px var(--font); text-decoration: none; cursor: pointer; }
     .btn:hover { filter: brightness(1.08); }
     .btn-ghost { background: transparent; color: var(--text); border-color: var(--border-2); }
     .btn-small { min-height: 36px; padding: 6px 12px; font-size: 13px; }
     .btn[disabled] { opacity: .6; cursor: progress; }
-    .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 40px; text-align: left; }
-    .fact { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-width: 0; }
-    .fact .k { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
-    .fact .v { font: 600 22px var(--mono); margin-top: 4px; overflow-wrap: anywhere; }
-    .fact .s { font-size: 13px; color: var(--muted); }
-    @media (max-width: 760px) { .facts { grid-template-columns: repeat(2, 1fr); } .fact .v { font-size: 18px; } .hero { padding-top: 40px; } .eyebrow { font-size: 11px; } }
+    @media (max-width: 760px) { .hero { padding-top: 40px; } }
 
     /* Sections */
     section.block { padding: 56px 0; border-top: 1px solid var(--border); }
@@ -167,9 +148,6 @@ export function renderLandingPage(c: Context): Response {
     .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
     @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } .grid-4 { grid-template-columns: repeat(2, 1fr); } }
     @media (max-width: 520px) { .grid-4 { grid-template-columns: 1fr; } }
-    .step .n { font: 700 13px var(--mono); color: var(--accent); }
-    .step h3 { margin: 6px 0; font-size: 17px; }
-    .step p { margin: 0; color: var(--muted); font-size: 14px; }
 
     /* Forms */
     label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
@@ -242,57 +220,31 @@ export function renderLandingPage(c: Context): Response {
   <header class="site">
     <div class="wrap bar">
       <a class="brand" href="/"><img src="/logo.png" alt="" width="32" height="32"><span>Moltworld</span></a>
-      <nav class="primary" id="nav" aria-label="Primary">
-        <ul>
-          <li><a href="#how">How it works</a></li>
-          <li><a href="#quote">Quote</a></li>
-          <li><a href="#models">Models</a></li>
-          <li><a href="#agents">Agents</a></li>
-          <li><a href="#market">Marketplace</a></li>
-          <li><a href="#receipts">Receipts</a></li>
-          <li><a href="#stats">Stats</a></li>
-          <li><a href="#developers">Developers</a></li>
-        </ul>
-      </nav>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span class="net" id="netBadge" title="Gateway status"><span class="dot" id="netDot"></span><span class="label" id="netLabel">${network}</span></span>
-        <button class="menu-btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
-      </div>
+      <span class="net" id="netLabel" title="Gateway status">${network}</span>
     </div>
   </header>
 
   <main id="main">
     <div class="wrap hero">
-      <span class="eyebrow">x402 · USDC on Algorand · no accounts, no API keys</span>
-      <h1>Pay-per-request AI for apps and agents</h1>
-      <p class="lede">Call ${models.length} chat, image, voice and video models with one HTTP request. Each call is priced from its exact input, paid in USDC through x402, and comes back with a signed receipt tied to its on-chain settlement.</p>
-      <div class="cta">
-        <a class="btn" href="#quote">Price a request</a>
-        <a class="btn btn-ghost" href="#developers">Integrate in 5 lines</a>
-      </div>
-      <div class="facts" aria-label="Gateway facts">
-        <div class="fact"><div class="k">Models</div><div class="v" id="factModels">${models.length}</div><div class="s">${counts.chat} chat · ${counts.image} image · ${counts.voice} voice · ${counts.video} video</div></div>
-        <div class="fact"><div class="k">Pricing</div><div class="v">cost + ${Math.round(config.priceMargin * 100)}%</div><div class="s">upstream cost, from the exact request</div></div>
-        <div class="fact"><div class="k">Settlement</div><div class="v">USDC</div><div class="s">${network} · ASA ${config.usdcAsaId}</div></div>
-        <div class="fact"><div class="k">Paid requests</div><div class="v" id="factPaid">—</div><div class="s">from the public ledger</div></div>
-      </div>
+      <h1>AI models, paid per request in USDC</h1>
+      <p class="lede">${models.length ? `${models.length} chat, image, voice and video models` : "Chat, image, voice and video models"} behind one HTTP API. You pay for each call with a USDC transfer on ${network} using x402. No account or API key.</p>
     </div>
 
     <section class="block" id="how">
       <div class="wrap">
-        <div class="head"><h2>How a paid request works</h2><p>Standard HTTP 402 with the x402 protocol. Any x402 client that supports Algorand can pay; nothing to sign up for.</p></div>
-        <div class="grid-4">
-          <div class="card step"><div class="n">01 · QUOTE</div><h3>Exact price, before paying</h3><p>Send your request. Invalid input is rejected with 400 and costs nothing. A valid one gets a 402 priced from its real size: tokens, images, characters or seconds.</p></div>
-          <div class="card step"><div class="n">02 · PAY</div><h3>Sign one USDC transfer</h3><p>Your wallet signs a transfer for exactly that amount to the gateway. The facilitator pays the network fee, so you need no ALGO.</p></div>
-          <div class="card step"><div class="n">03 · SETTLE</div><h3>Settled on Algorand</h3><p>Chat settles after the answer is produced and rebates unused tokens. Image, voice and video settle first and are refunded on-chain if the model fails.</p></div>
-          <div class="card step"><div class="n">04 · PROVE</div><h3>Signed receipt</h3><p>Every response carries an Ed25519 receipt binding the txid, payer and amount to hashes of your request and the exact response bytes.</p></div>
-        </div>
+        <div class="head"><h2>How payment works</h2></div>
+        <ol class="steps">
+          <li>Send a request. If it's invalid you get a 400 and pay nothing. If it's valid you get a 402 with the price for that exact request.</li>
+          <li>Your wallet signs one USDC transfer for that amount. The facilitator covers the network fee, so you don't need ALGO.</li>
+          <li>Chat is settled after the answer is ready, and unused tokens are paid back. Image, voice and video are settled first and refunded if the model fails.</li>
+          <li>The response includes a signed receipt with the transaction id and hashes of your request and the response.</li>
+        </ol>
       </div>
     </section>
 
     <section class="block" id="quote">
       <div class="wrap">
-        <div class="head"><h2>Price a request</h2><p>Live quotes from <code>POST /v1/quote</code>. The amount is identical to what the 402 challenge for the same body asks for.</p></div>
+        <div class="head"><h2>Price a request</h2><p>Uses <code>POST /v1/quote</code>. The price shown is the same amount the 402 response will ask for.</p></div>
         <div class="grid-2">
           <form class="card" id="quoteForm" novalidate>
             <label for="qModel">Model</label>
@@ -330,7 +282,7 @@ export function renderLandingPage(c: Context): Response {
             </div>
           </form>
           <div class="card" aria-live="polite" id="quoteOut">
-            <p class="note">Pick a model and request, then get a quote. Nothing is charged here: this page never asks your wallet to sign.</p>
+            <p class="note">Pick a model, fill in the request and get a quote. Nothing on this page charges you.</p>
           </div>
         </div>
       </div>
@@ -338,7 +290,7 @@ export function renderLandingPage(c: Context): Response {
 
     <section class="block" id="models">
       <div class="wrap">
-        <div class="head"><h2>Models</h2><p>Each model is named after the upstream that actually serves it. Models whose upstream can't be verified at startup are withheld and never sold.</p></div>
+        <div class="head"><h2>Models</h2><p>Each model is listed under the provider and model id that serves it. If a provider can't confirm a model exists, we don't sell it.</p></div>
         <div class="filters" role="group" aria-label="Filter by modality">
           <button class="tab" type="button" data-filter="all" aria-pressed="true">All (${models.length})</button>
           <button class="tab" type="button" data-filter="chat" aria-pressed="false">Chat (${counts.chat})</button>
@@ -370,7 +322,7 @@ export function renderLandingPage(c: Context): Response {
 
 // The agent gets a credential with no private key in it:
 const agent = new MoltworldClient({ mandate: credential });</code></pre>
-            <p class="note">The SDK rebuilds the program locally from your limits and refuses to sign anything the server returns that differs by a byte.</p>
+            <p class="note">The SDK checks the program against your limits before you sign it.</p>
           </div>
           <form class="card" id="mandateForm" novalidate>
             <h3 style="margin-top:0">Inspect a mandate</h3>
@@ -389,11 +341,11 @@ const agent = new MoltworldClient({ mandate: credential });</code></pre>
         <div class="grid-2">
           <div class="card">
             <h3 style="margin-top:0">Live listings</h3>
-            <div id="marketOut" aria-live="polite"><p class="note">Loading…</p></div>
+            <div id="marketOut" aria-live="polite"><p class="note">Loading</p></div>
           </div>
           <div class="card">
             <h3 style="margin-top:0">List your API</h3>
-            <p class="note">Listings are signed with your Algorand wallet (so payouts can only go to you) and reviewed before going live.</p>
+            <p class="note">Listings are signed with your Algorand wallet so payouts can only go to you. We review each listing before it goes live.</p>
             <pre class="code"><code>const listing = {
   action: "list", creator: wallet.addr.toString(),
   slug: "weather-now", name: "Weather Now",
@@ -432,18 +384,21 @@ await fetch("${origin}/v1/market/listings", {
 
     <section class="block" id="stats">
       <div class="wrap">
-        <div class="head"><h2>Public ledger</h2><p>Figures come straight from the gateway's ledger, excluding operator wallets. Each settlement links to its Algorand transaction, so every number can be checked on-chain.</p></div>
-        <div class="grid-4" id="statCards">
-          <div class="card fact"><div class="k">Paid requests</div><div class="v" id="sPaid">—</div><div class="s" id="sPaid24">—</div></div>
-          <div class="card fact"><div class="k">Net revenue</div><div class="v" id="sNet">—</div><div class="s" id="sGross">—</div></div>
-          <div class="card fact"><div class="k">Paying wallets</div><div class="v" id="sWallets">—</div><div class="s" id="sRepeat">—</div></div>
-          <div class="card fact"><div class="k">Refunded</div><div class="v" id="sRefunds">—</div><div class="s">failed paid work, returned on-chain</div></div>
-        </div>
+        <div class="head"><h2>Usage</h2><p>From the gateway ledger, excluding our own wallets. Each settlement links to its Algorand transaction.</p></div>
+        <dl class="kv stats" id="statList">
+          <dt>Paid requests</dt><dd id="sPaid">-</dd>
+          <dt>Last 24 hours</dt><dd id="sPaid24">-</dd>
+          <dt>Gross</dt><dd id="sGross">-</dd>
+          <dt>Net revenue</dt><dd id="sNet">-</dd>
+          <dt>Paying wallets</dt><dd id="sWallets">-</dd>
+          <dt>Returning wallets</dt><dd id="sRepeat">-</dd>
+          <dt>Refunded</dt><dd id="sRefunds">-</dd>
+        </dl>
         <h3>Recent settlements</h3>
         <div class="table-wrap">
           <table class="stack">
             <thead><tr><th>When</th><th>Model</th><th>Amount</th><th>Transaction</th></tr></thead>
-            <tbody id="recentRows"><tr><td colspan="4">Loading…</td></tr></tbody>
+            <tbody id="recentRows"><tr><td colspan="4">Loading</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -451,7 +406,7 @@ await fetch("${origin}/v1/market/listings", {
 
     <section class="block" id="developers">
       <div class="wrap">
-        <div class="head"><h2>Developers</h2><p>OpenAI-style request bodies. Use the SDKs (in <a href="https://github.com/hackcat29/moltworld-x402/tree/main/sdk">sdk/</a>) or any x402 client that supports Algorand.</p></div>
+        <div class="head"><h2>Developers</h2><p>Request bodies follow the OpenAI format. Use the SDKs (in <a href="https://github.com/hackcat29/moltworld-x402/tree/main/sdk">sdk/</a>) or any x402 client that supports Algorand.</p></div>
         <div class="codetabs card">
           <div role="tablist" aria-label="Code examples">
             <button role="tab" type="button" id="t-ts" aria-controls="p-ts" aria-selected="true">TypeScript</button>
@@ -499,14 +454,14 @@ curl -si ${origin}/v1/models/gpt-4o/chat/completions -H 'Content-Type: applicati
 
 # 3. Retry with a Payment-Signature header from an x402 Algorand wallet.</code></pre></div>
         </div>
-        <p class="note">Machine-readable: <a href="/llms.txt">llms.txt</a> · <a href="/.well-known/x402">/.well-known/x402</a> · <a href="/.well-known/agent-card.json">A2A agent card</a> · <a href="/v1/models">/v1/models</a></p>
+        <p class="note">For agents: <a href="/llms.txt">llms.txt</a>, <a href="/.well-known/x402">/.well-known/x402</a>, <a href="/.well-known/agent-card.json">A2A agent card</a>, <a href="/v1/models">/v1/models</a>.</p>
       </div>
     </section>
   </main>
 
   <footer>
     <div class="wrap">
-      <div><strong>Moltworld</strong> · payTo <span class="mono" style="overflow-wrap:anywhere">${config.payToAddress}</span></div>
+      <div><strong>Moltworld</strong>. Payments go to <span class="mono" style="overflow-wrap:anywhere">${config.payToAddress}</span></div>
       <div class="links">
         <a href="/health">Health</a><a href="/v1/models">Catalog JSON</a><a href="/v1/stats">Stats JSON</a>
         <a href="/.well-known/moltworld-receipts.json">Receipt keys</a><a href="${config.facilitatorUrl}">Facilitator</a>
@@ -542,17 +497,13 @@ curl -si ${origin}/v1/models/gpt-4o/chat/completions -H 'Content-Type: applicati
       return { res, body };
     }
 
-    // Navigation
-    const nav = $("nav"), menuBtn = $("menuBtn");
-    menuBtn.addEventListener("click", () => { const open = nav.classList.toggle("open"); menuBtn.setAttribute("aria-expanded", String(open)); });
-    nav.addEventListener("click", (e) => { if (e.target.closest("a")) { nav.classList.remove("open"); menuBtn.setAttribute("aria-expanded", "false"); } });
-
     // Health badge
     api("/health").then(({ res, body }) => {
       const ok = res.ok && body && body.ready;
-      $("netDot").className = "dot " + (ok ? "ok" : "bad");
-      $("netLabel").textContent = (body && body.network === "mainnet" ? "Mainnet" : "Testnet") + (ok ? " · online" : " · degraded");
-    }).catch(() => { $("netDot").className = "dot bad"; });
+      const label = $("netLabel");
+      label.textContent = (body && body.network === "mainnet" ? "Algorand Mainnet" : "Algorand Testnet") + (ok ? "" : " (unavailable)");
+      label.classList.toggle("down", !ok);
+    }).catch(() => $("netLabel").classList.add("down"));
 
     // Copy buttons
     document.addEventListener("click", async (e) => {
@@ -565,7 +516,7 @@ curl -si ${origin}/v1/models/gpt-4o/chat/completions -H 'Content-Type: applicati
     const qModel = $("qModel");
     for (const modality of ["chat", "image", "voice", "video"]) {
       const group = el("optgroup", { label: modality[0].toUpperCase() + modality.slice(1) });
-      for (const m of MODELS.filter((x) => x.modality === modality)) group.append(el("option", { value: m.slug, text: m.name + " — from " + m.from }));
+      for (const m of MODELS.filter((x) => x.modality === modality)) group.append(el("option", { value: m.slug, text: m.name + " (from " + m.from + ")" }));
       if (group.children.length) qModel.append(group);
     }
     const fill = (select, values, labeler = String) => { select.replaceChildren(...values.map((v) => el("option", { value: String(v), text: labeler(v) }))); };
@@ -598,9 +549,9 @@ curl -si ${origin}/v1/models/gpt-4o/chat/completions -H 'Content-Type: applicati
         const { res, body } = await api("/v1/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: m.slug, ...bodyFor(m) }) });
         if (!res.ok) { out.replaceChildren(errorBox((body && body.error && body.error.message) || "Quote failed")); return; }
         const q = body.quote, u = q.units;
-        const units = [u.estimatedInputTokens && u.estimatedInputTokens + " input tokens (est.)", u.maxOutputTokens && u.maxOutputTokens + " max output tokens", u.images && u.images + " image(s)", u.characters && u.characters + " characters", u.seconds && u.seconds + " seconds"].filter(Boolean).join(" · ");
+        const units = [u.estimatedInputTokens && u.estimatedInputTokens + " input tokens (est.)", u.maxOutputTokens && u.maxOutputTokens + " max output tokens", u.images && u.images + " image(s)", u.characters && u.characters + " characters", u.seconds && u.seconds + " seconds"].filter(Boolean).join(", ");
         out.replaceChildren(
-          el("div", { class: "note", text: body.name + " · " + (body.payment_flow === "authorization" ? "settles after the answer" : "settles first, refunded on failure") }),
+          el("div", { class: "note", text: body.name + ": " + (body.payment_flow === "authorization" ? "charged after the answer" : "charged first, refunded if it fails") }),
           el("div", { class: "big-price", text: q.formattedPrice }),
           kv([["Units", units], ["Upstream cost", "$" + q.upstreamCostUsd.toFixed(6) + " (" + q.costSource + ")"], ["Margin", q.marginPercent + "%"], ["Micro-USDC", String(q.microUsdc)], ["Endpoint", "POST " + body.endpoint]]),
           el("p", { class: "note", text: body.note })
@@ -620,7 +571,7 @@ curl -si ${origin}/v1/models/gpt-4o/chat/completions -H 'Content-Type: applicati
         }
         const required = JSON.parse(atob(header)), a = required.accepts[0];
         out.replaceChildren(
-          el("div", { class: "note", text: "HTTP 402 Payment Required · x402 v" + required.x402Version }),
+          el("div", { class: "note", text: "HTTP 402 Payment Required (x402 v" + required.x402Version + ")" }),
           el("div", { class: "big-price", text: fmtMicro(a.amount) }),
           kv([["Scheme", a.scheme], ["Network", a.network], ["Asset (ASA)", a.asset], ["Pay to", a.payTo], ["Flow", (a.extra && a.extra.paymentFlow) || "authorization"], ["Fee payer", a.extra && a.extra.feePayer]]),
           el("pre", { class: "code" }, el("code", { text: JSON.stringify(required, null, 2) }))
@@ -725,7 +676,7 @@ curl -si ${origin}/v1/models/gpt-4o/chat/completions -H 'Content-Type: applicati
       const verdict = local.ok === null ? (server && server.signature_valid) : local.ok;
       target.replaceChildren(
         el("p", {}, el("span", { class: "badge " + (verdict ? "good" : "bad"), text: verdict ? "Valid" : "Invalid" }), " " + local.why),
-        kv([["Request", receipt.id], ["Status", server ? server.status : undefined], ["Model", receipt.model], ["Upstream", (receipt.upstreamProvider || "") + " · " + (receipt.upstreamModel || "")], ["Paid", fmtMicro(receipt.amountMicro)], ["Rebate", receipt.rebateMicro ? fmtMicro(receipt.rebateMicro) : undefined], ["Payer", receipt.payer], ["Transaction", txLink(receipt.txid)], ["Refund", server && server.refund ? server.refund.status + (server.refund.txid ? " · " + server.refund.txid : "") : undefined], ["Request sha256", receipt.requestSha256], ["Response sha256", receipt.responseSha256], ["Key id", receipt.kid]])
+        kv([["Request", receipt.id], ["Status", server ? server.status : undefined], ["Model", receipt.model], ["Upstream", (receipt.upstreamProvider || "") + " / " + (receipt.upstreamModel || "")], ["Paid", fmtMicro(receipt.amountMicro)], ["Rebate", receipt.rebateMicro ? fmtMicro(receipt.rebateMicro) : undefined], ["Payer", receipt.payer], ["Transaction", txLink(receipt.txid)], ["Refund", server && server.refund ? server.refund.status + (server.refund.txid ? ", " + server.refund.txid : "") : undefined], ["Request sha256", receipt.requestSha256], ["Response sha256", receipt.responseSha256], ["Key id", receipt.kid]])
       );
     });
 
@@ -733,16 +684,15 @@ curl -si ${origin}/v1/models/gpt-4o/chat/completions -H 'Content-Type: applicati
     api("/v1/stats").then(({ res, body }) => {
       if (!res.ok) return;
       const s = body.metrics;
-      $("factPaid").textContent = s.paid_requests;
-      $("sPaid").textContent = s.paid_requests; $("sPaid24").textContent = s.paid_requests_24h + " in the last 24h";
-      $("sNet").textContent = s.net_revenue_usdc; $("sGross").textContent = s.gross_usdc + " gross · " + s.rebated_usdc + " rebated";
-      $("sWallets").textContent = s.unique_paying_wallets; $("sRepeat").textContent = Math.round(s.repeat_payer_rate * 100) + "% came back";
+      $("sPaid").textContent = s.paid_requests; $("sPaid24").textContent = s.paid_requests_24h;
+      $("sGross").textContent = s.gross_usdc + " (" + s.rebated_usdc + " paid back as rebates)"; $("sNet").textContent = s.net_revenue_usdc;
+      $("sWallets").textContent = s.unique_paying_wallets; $("sRepeat").textContent = Math.round(s.repeat_payer_rate * 100) + "%";
       $("sRefunds").textContent = s.refunded_usdc;
       const rows = body.recent_settlements.map((r) => el("tr", {},
         el("td", { "data-label": "When", text: new Date(r.at).toLocaleString() }),
         el("td", { "data-label": "Model", text: r.model || r.modality || "market" }),
         el("td", { "data-label": "Amount", text: r.amount }),
-        el("td", { "data-label": "Transaction", class: "mono" }, r.txid ? txLink(r.txid) : "—")));
+        el("td", { "data-label": "Transaction", class: "mono" }, r.txid ? txLink(r.txid) : "-")));
       $("recentRows").replaceChildren(...(rows.length ? rows : [el("tr", {}, el("td", { colspan: "4", text: "No settlements yet." }))]));
     }).catch(() => {});
 

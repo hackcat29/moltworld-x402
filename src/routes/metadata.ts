@@ -3,7 +3,7 @@ import { config } from "../config.js";
 import { defaultModelRegistry, getModelEndpoint, getModelDiscoveryDescription } from "../models/registry.js";
 import { quoteRequest, referenceRequest } from "../pricing/index.js";
 
-const SITE_TITLE = "Moltworld — Multimodal AI Gateway with x402 on Algorand";
+const SITE_TITLE = "Moltworld | Multimodal AI Gateway with x402 on Algorand";
 const SITE_DESCRIPTION =
   "One API for AI models and autonomous agents. Chat, image, voice, and video requests are paid per call in USDC on Algorand.";
 const SERVICE_TAGS = ["moltworld", "ai-inference", "algorand", "x402", "x402-global-challenge"];

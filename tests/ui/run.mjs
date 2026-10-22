@@ -89,7 +89,7 @@ async function runViewport(browser, vp, scheme) {
   });
 
   await page.goto(BASE + "/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => document.getElementById("factPaid")?.textContent !== "—");
+  await page.waitForFunction(() => document.getElementById("sPaid")?.textContent !== "-");
 
   // Layout
   const overflow = await noHorizontalOverflow(page);
@@ -119,24 +119,10 @@ async function runViewport(browser, vp, scheme) {
 
   await page.screenshot({ path: path.join(SHOTS, `${current.replace("/", "-")}-full.png`), fullPage: true });
 
-  // Navigation
-  const menu = page.locator("#menuBtn");
-  const navWidth = (await page.viewportSize()).width;
-  if (navWidth <= 900) {
-    check("menu button shown on narrow screens", await menu.isVisible());
-    check("nav collapsed by default", !(await page.locator("#nav").isVisible()));
-    await menu.click();
-    check("menu opens", await page.locator("#nav").isVisible());
-    check("menu reports expanded", (await menu.getAttribute("aria-expanded")) === "true");
-    await page.locator('#nav a[href="#stats"]').click();
-    await page.waitForTimeout(400);
-    check("menu closes after navigating", !(await page.locator("#nav").isVisible()));
-  } else {
-    check("nav visible on wide screens", await page.locator("#nav").isVisible());
-    check("menu button hidden on wide screens", !(await menu.isVisible()));
-  }
-  const badge = await page.locator("#netDot").getAttribute("class");
-  check("gateway health badge shows online", badge.includes("ok"), badge);
+  // Header: no in-page section links, live network label
+  check("no in-page nav links in the header", (await page.locator('header a[href^="#"]').count()) === 0);
+  const label = (await page.textContent("#netLabel")).trim();
+  check("header shows the network from /health", /^Algorand (Mainnet|Testnet)$/.test(label), label);
 
   // Quote calculator: chat
   await page.selectOption("#qModel", "gpt-4o");
