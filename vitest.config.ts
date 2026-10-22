@@ -5,5 +5,8 @@ export default defineConfig({
     hookTimeout: 30000,
     testTimeout: 30000,
     exclude: ["node_modules", "dist"],
+    env: {
+      ALGORAND_NETWORK: "testnet",
+    },
   },
 });

@@ -1,7 +1,7 @@
 # Deploying Moltworld
 
 One origin serves `moltworld.xyz`: a VPS running Nginx, the Node 22 gateway (systemd),
-PostgreSQL 16 and Redis 7 (Docker). Cloudflare provides DNS and TLS. The Cloudflare Worker
+and native PostgreSQL 16 (apt). Cloudflare provides DNS and TLS. The Cloudflare Worker
 bound to the zone is a pass-through to the origin (see `src/worker.ts`); it can be deleted.
 
 ## First install
@@ -12,10 +12,9 @@ git clone https://github.com/hackcat29/moltworld-x402.git /opt/moltworld
 bash /opt/moltworld/deploy/contabo-setup.sh
 ```
 
-The script is idempotent. It installs Node 22, pnpm, Docker and Nginx, generates any missing
-secrets in `/opt/moltworld/.env` (`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `RECEIPT_SIGNING_KEY`,
-`ADMIN_TOKEN`, `DATABASE_URL`, `REDIS_URL`), starts the datastores, builds, installs the
-systemd unit and configures Nginx. Then set in `.env`:
+The script is idempotent. It installs Node 22, pnpm, native PostgreSQL and Nginx, generates any missing
+secrets in `/opt/moltworld/.env` (`POSTGRES_PASSWORD`, `RECEIPT_SIGNING_KEY`, `ADMIN_TOKEN`, `DATABASE_URL`),
+configures the PostgreSQL database, builds, installs the systemd unit and configures Nginx. Then set in `.env`:
 
 - `ALGORAND_NETWORK=mainnet` and `AVM_ADDRESS` (revenue address; the gateway never needs its key)
 - provider keys: `OPENROUTER_API_KEY`, `FAL_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`
@@ -26,12 +25,13 @@ and `systemctl restart moltworld`. On mainnet the gateway refuses to start witho
 
 ## Upgrading an existing VPS to this version
 
-The ledger moved to PostgreSQL and receipts need a persistent key, so re-run the setup script
-once before (or right after) the first CI deploy of this version:
+The ledger moved to PostgreSQL and receipts need a persistent key. Either run the setup script:
 
 ```bash
 cd /opt/moltworld && git pull && bash deploy/contabo-setup.sh
 ```
+
+or let the GitHub Actions CI workflow auto-provision native PostgreSQL and missing credentials on push to `main`.
 
 ## Cloudflare
 

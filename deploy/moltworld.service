@@ -1,7 +1,7 @@
 [Unit]
 Description=Moltworld x402 AI Gateway
-After=network-online.target docker.service
-Wants=network-online.target docker.service
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
 
 [Service]
 Type=simple

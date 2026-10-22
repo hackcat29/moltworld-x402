@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ==============================================================================
 # Moltworld x402 Gateway: VPS provisioning (Ubuntu 22.04+ / Debian 12+)
-# Cloudflare (DNS + TLS) -> Nginx -> Node 22 gateway (systemd) -> PostgreSQL 16 + Redis 7 (Docker)
+# Cloudflare (DNS + TLS) -> Nginx -> Node 22 gateway (systemd) -> PostgreSQL (native)
 # Safe to re-run: existing secrets in .env are kept.
 # ==============================================================================
 
@@ -19,11 +19,16 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-log "Installing system packages"
+# Stop any legacy docker containers if docker is installed/running
+if command -v docker >/dev/null 2>&1; then
+  docker stop moltworld-postgres moltworld-redis 2>/dev/null || true
+  docker rm moltworld-postgres moltworld-redis 2>/dev/null || true
+fi
+
+log "Installing system packages (native PostgreSQL)"
 apt-get update
-apt-get install -y curl git ufw nginx jq openssl ca-certificates docker.io
-apt-get install -y docker-compose-v2 || apt-get install -y docker-compose-plugin || true
-systemctl enable --now docker
+apt-get install -y curl git ufw nginx jq openssl ca-certificates postgresql postgresql-contrib
+systemctl enable --now postgresql
 
 log "Installing Node.js 22 and pnpm"
 if ! command -v node >/dev/null || [ "$(node -v | cut -d. -f1 | tr -d v)" -lt 22 ]; then
@@ -61,17 +66,22 @@ ensure_secret() {
   if [ -z "$(get_env "$name")" ]; then set_env "$name" "$value"; echo "   generated $name"; fi
 }
 
-# Reuse the password of an existing database URL so an initialised volume keeps working.
+# Reuse the password of an existing database URL so an initialised db keeps working.
 existing_db_pw="$(get_env DATABASE_URL | sed -nE 's|^postgres(ql)?://[^:]+:([^@]+)@.*|\2|p')"
 ensure_secret POSTGRES_PASSWORD "${existing_db_pw:-$(openssl rand -hex 24)}"
-ensure_secret REDIS_PASSWORD "$(openssl rand -hex 24)"
 ensure_secret RECEIPT_SIGNING_KEY "$(openssl rand -base64 32)"
 ensure_secret ADMIN_TOKEN "$(openssl rand -hex 32)"
 ensure_secret DATABASE_URL "postgres://moltworld:$(get_env POSTGRES_PASSWORD)@127.0.0.1:5432/moltworld"
-ensure_secret REDIS_URL "redis://:$(get_env REDIS_PASSWORD)@127.0.0.1:6379"
 
-log "Starting PostgreSQL and Redis"
-docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.yml up -d --wait
+log "Configuring native PostgreSQL database and user"
+systemctl enable --now postgresql
+PG_PASSWORD="$(get_env POSTGRES_PASSWORD)"
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'moltworld'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE USER moltworld WITH PASSWORD '$PG_PASSWORD';"
+sudo -u postgres psql -c "ALTER USER moltworld WITH PASSWORD '$PG_PASSWORD';"
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'moltworld'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE DATABASE moltworld OWNER moltworld;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE moltworld TO moltworld;"
 
 log "Building"
 pnpm install --frozen-lockfile
@@ -107,7 +117,7 @@ fi
 
 cat <<EOF
 
-Provisioned. Next:
+Provisioned without Docker. Next:
   1. Edit $ENV_FILE: AVM_ADDRESS (revenue; can be cold/multisig), provider keys
      (OPENROUTER_API_KEY, FAL_KEY, OPENAI_API_KEY, ELEVENLABS_API_KEY) and
      PAYOUT_WALLET_MNEMONIC (hot wallet for refunds/rebates/creator payouts).

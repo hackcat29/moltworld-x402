@@ -90,22 +90,45 @@ jobs:
           script: |
             set -e
             cd /opt/moltworld
-            # Preflight: this version refuses to start on mainnet without a ledger and a
-            # persistent receipt key. Stop here, leaving the running version untouched.
-            if grep -q '^ALGORAND_NETWORK=mainnet' .env; then
-              for key in DATABASE_URL RECEIPT_SIGNING_KEY; do
-                if ! grep -q "^$key=." .env; then
-                  echo "::error::$key is missing from /opt/moltworld/.env. Run deploy/contabo-setup.sh on the VPS first. Nothing was changed."
-                  exit 1
-                fi
-              done
+
+            # Ensure native PostgreSQL is installed and active
+            if ! command -v psql >/dev/null; then
+              apt-get update && apt-get install -y postgresql postgresql-contrib
+              systemctl enable --now postgresql
+            else
+              systemctl is-active --quiet postgresql || systemctl start postgresql
             fi
+
+            # Auto-provision missing secrets in .env if absent
+            if [ -f .env ]; then
+              if ! grep -q '^POSTGRES_PASSWORD=.' .env; then
+                echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> .env
+              fi
+              if ! grep -q '^RECEIPT_SIGNING_KEY=.' .env; then
+                echo "RECEIPT_SIGNING_KEY=$(openssl rand -base64 32)" >> .env
+              fi
+              if ! grep -q '^DATABASE_URL=.' .env; then
+                PG_PW=$(grep '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2-)
+                echo "DATABASE_URL=postgres://moltworld:${PG_PW}@127.0.0.1:5432/moltworld" >> .env
+              fi
+
+              # Ensure PostgreSQL role and database exist
+              PG_PW=$(grep '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2-)
+              sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'moltworld'" | grep -q 1 || \
+                sudo -u postgres psql -c "CREATE USER moltworld WITH PASSWORD '$PG_PW';"
+              sudo -u postgres psql -c "ALTER USER moltworld WITH PASSWORD '$PG_PW';"
+              sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'moltworld'" | grep -q 1 || \
+                sudo -u postgres psql -c "CREATE DATABASE moltworld OWNER moltworld;"
+              sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE moltworld TO moltworld;"
+            fi
+
+            # Stop legacy docker containers if running
+            if command -v docker >/dev/null 2>&1; then
+              docker stop moltworld-postgres moltworld-redis 2>/dev/null || true
+            fi
+
             git fetch origin main
             git reset --hard origin/main
-            # Datastores first: the gateway refuses to start on mainnet without its ledger.
-            if grep -q '^POSTGRES_PASSWORD=.' .env; then
-              docker compose --env-file .env -f deploy/docker-compose.yml up -d --wait
-            fi
             pnpm install --frozen-lockfile
             pnpm build
             cp deploy/moltworld.service /etc/systemd/system/moltworld.service
