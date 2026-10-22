@@ -5,6 +5,9 @@ import {
 } from "@a2a-js/sdk/server";
 import { config } from "../config.js";
 import { defaultModelRegistry, getModelDiscoveryDescription, getModelEndpoint } from "../models/registry.js";
+import { quoteRequest, referenceRequest } from "../pricing/index.js";
+
+const fromMicro = (m: Parameters<typeof referenceRequest>[0]) => quoteRequest(m, referenceRequest(m));
 
 const origin = config.publicDomain.replace(/\/+$/, "");
 
@@ -38,12 +41,12 @@ const executor: AgentExecutor = {
     const named = models.find((model) => question.includes(model.slug.toLowerCase()));
     const matches = named ? [named] : models.filter((model) => !modality || model.modality === modality);
     if (question.includes("cheap") || question.includes("lowest price")) {
-      matches.sort((a, b) => Number(a.price.slice(1)) - Number(b.price.slice(1)));
+      matches.sort((a, b) => fromMicro(a).microUsdc - fromMicro(b).microUsdc);
     }
     const shown = matches.slice(0, 10);
     const lines = [
-      `${matches.length} matching Moltworld models. Prices are informational; inspect each live HTTP 402 challenge before signing payment.`,
-      ...shown.map((model) => `${model.displayName} (${model.slug}): ${model.price} USDC; POST ${origin}${getModelEndpoint(model)}. ${getModelDiscoveryDescription(model)}`),
+      `${matches.length} matching Moltworld models. Prices depend on the request body; POST /v1/quote gives the exact amount before paying.`,
+      ...shown.map((model) => `${model.displayName} (${model.slug}): from ${fromMicro(model).formattedPrice} USDC; POST ${origin}${getModelEndpoint(model)}. ${getModelDiscoveryDescription(model)}`),
       ...(matches.length > shown.length ? [`More: ${origin}/v1/models`] : []),
       `Payment: Algorand ${config.isMainnet ? "Mainnet" : "Testnet"} USDC via x402 and GoPlausible. MCP: ${origin}/mcp`,
     ];

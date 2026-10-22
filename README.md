@@ -1,300 +1,134 @@
-# Moltworld: Multimodal x402 AI Gateway on Algorand
+# Moltworld
 
-**One unified API for AI models and autonomous agents.**  
-Pay per request in USDC on Algorand. Zero subscriptions, zero prepaid credits, 100% cryptographic receipts.
+**Pay-per-request AI for apps and autonomous agents, settled in USDC on Algorand via x402.**
 
-**Repository:** [hackcat29/moltworld-x402](https://github.com/hackcat29/moltworld-x402)
+One HTTP request to call chat, image, voice or video models. Each request is priced from its
+exact input, paid with a single USDC transfer (no account, no API key, no ALGO needed), and
+answered with an Ed25519-signed receipt that ties the on-chain settlement to hashes of the
+request and response.
 
-- **Public Domain**: [https://moltworld.xyz](https://moltworld.xyz)
-- **Deployment**: Contabo VPS (Ubuntu 22.04 LTS / Debian 12) + Cloudflare Reverse Proxy + Docker (PostgreSQL 16 & Redis 7)
-- **Modalities**: Multimodal: Chat Completions (22 models), Image Generation (9 models), Voice Speech Synthesis (3 models), and Video Synthesis (6 models)
-- **Active Models**: 40 production-verified models across OpenAI, Anthropic, Google, DeepSeek, Meta, Black Forest Labs, Recraft, ByteDance, Kuaishou, and Alibaba
-- **Payment Scheme**: Algorand x402 exact micropayments via GoPlausible facilitator
-- **Receipts**: Cryptographically signed Ed25519 receipts (`Moltworld-Receipt`) published and verifiable at `/.well-known/moltworld-receipts.json`
-- **Challenge Tag**: `x402-global-challenge`
+- Site: [moltworld.xyz](https://moltworld.xyz) · agent docs: [/llms.txt](https://moltworld.xyz/llms.txt)
+- Repository: [hackcat29/moltworld-x402](https://github.com/hackcat29/moltworld-x402) (moved from the suspended `UncleTom29` account, history preserved)
+- Challenge tag: `x402-global-challenge`
 
----
+## Why x402 is the core of the product
 
-## 1. What Moltworld Is
+x402 is the only way in: there are no API keys or prepaid balances to fall back to.
 
-Moltworld is an open, production-grade multimodal AI model gateway powered by HTTP 402 (`x402`) micropayments on the Algorand blockchain. Clients and autonomous agents select a model, submit a standard OpenAI-compatible JSON payload, settle an exact per-request USDC fee via the GoPlausible facilitator, and immediately receive the generated output backed by a verifiable cryptographic receipt.
+| | |
+| --- | --- |
+| **Priced per request** | The 402 challenge is computed from the body: input tokens + `max_tokens`, images, characters or seconds, times live upstream rates, plus a published margin. `POST /v1/quote` returns the same amount for free. |
+| **Never charged for nothing** | Invalid input gets 400 before any challenge. Chat settles only after the answer exists. Image, voice and video settle first and are refunded on-chain if the model fails. |
+| **Usage rebates** | Chat is paid for its full `max_tokens` budget (x402 `exact`); the unused part is credited back and paid out in USDC. |
+| **Safe retries** | A payment is keyed by its Algorand txid. Retrying with the same `Payment-Signature` after a dropped connection returns the original response; it never settles twice. |
+| **Concurrency-safe** | Unsettled requests from one wallet are capped at its on-chain USDC balance, so parallel requests cannot outspend it. |
+| **Verifiable** | Every paid response carries `Moltworld-Receipt`: payer, amount, txid, upstream model actually used, `sha256(request)`, `sha256(response bytes)`, signed with a published Ed25519 key. |
 
-Every paid endpoint is:
-1. **Protected by x402**: Requests without payment return `402 Payment Required` with Base64 payment requirements.
-2. **Transparent Cost-Plus Pricing**: Dynamic quotes calculated from upstream costs + 30% margin via `POST /v1/quote`.
-3. **Cryptographically Verifiable**: Every invocation generates an Ed25519-signed canonical JSON receipt with SHA-256 digests of inputs and outputs.
-4. **Honest Upstream Routing**: Zero mock stubs or free-tier fallback ladders. Requests are routed strictly to verified upstream providers (OpenRouter direct, fal.ai, OpenAI, ElevenLabs).
-5. **Upfront Safety & Automated Refunds**: Heavy media jobs (image, video) settle upfront to guarantee capacity. If upstream generation fails, an automated on-chain USDC refund transaction is immediately sent back to the payer.
-6. **Cataloged in GoPlausible Bazaar**: Discovered automatically by agents via Bazaar discovery extensions.
-7. **Attributed to the Global x402 Challenge**: Tagged with `x402-global-challenge` on every route.
-8. **Fail-Closed Architecture**: Unsupported providers or unconfigured upstream keys fail closed (`503 Service Unavailable` or `502 Bad Gateway`) before payment can ever be accepted or settled.
+## What is new in agentic payments here
 
----
+**Spending mandates.** An owner delegates a small LogicSig program to an agent. The agent can
+then sign x402 payments *as the owner's account*, but the Algorand protocol only lets those
+payments be USDC to Moltworld, at most N per call, with zero fee, until an expiry round.
+Moltworld additionally enforces a rolling 24h cap and a model allow-list per mandate, and
+because the payee is pinned, a server-side revocation stops all spending. The reference x402
+facilitator accepts LogicSig-signed payments, so this works with standard x402 clients. The
+program is assembled deterministically (checked byte-for-byte against algod's compiler), the
+SDK verifies a draft before the owner signs it, and the test suite runs the real program
+through Algorand testnet `simulate`.
 
-## 2. Architecture & Production Flow
+**Creator marketplace.** Anyone with an Algorand wallet can sell their own HTTPS API through
+Moltworld's x402 checkout. Listings are wallet-signed and reviewed; calls are forwarded with an
+HMAC signature over the body; creators receive 85% in batched atomic on-chain payouts.
 
+## Using it
+
+```ts
+import { MoltworldClient } from "@moltworld/sdk"; // sdk/js
+
+const client = new MoltworldClient({ mnemonic, maxPerRequestUsd: 0.25, budgetUsd: 5 });
+const res = await client.chat("gpt-4o", { messages: [{ role: "user", content: "Hi" }], max_tokens: 300 });
+res.verification?.ok; // receipt signature + request/response hashes checked
 ```
-                           Client / Autonomous Agent / MCP Server
-                                             │
-                                             ▼
-                         Cloudflare Edge Proxy (DNS + WAF + SSL)
-                                             │ (Full Strict HTTPS)
-                                             ▼
-                           Contabo VPS (Port 80/443 - UFW)
-                                             │
-                          Nginx Reverse Proxy (Real IP restore)
-                                             │ (HTTP 127.0.0.1:3000)
-                                             ▼
-                               Moltworld Gateway Daemon
-                            (Hono + Node.js 22 systemd unit)
-                                             │
-                   ┌─────────────────────────┴─────────────────────────┐
-                   ▼                                                   ▼
-              Free Routes                                         Paid Routes
-            GET / (Landing & Playground)            POST /v1/models/:model/chat/completions
-            GET /health (Fail-Closed)               POST /v1/models/:model/images/generations
-            GET /v1/models (Catalog)                POST /v1/models/:model/audio/speech
-            POST /v1/quote (Live Dynamic Quote)     POST /v1/models/:model/videos/generations
-            GET /v1/stats (Organic vs Fleet)        GET /v1/jobs/:id (Async Video Polling)
-            GET /v1/receipts/:id (Receipts)                            │
-            GET /.well-known/moltworld-receipts.json                   ▼
-                                                           x402 Resource Server
-                                                    - ExactAvmScheme (Testnet/Mainnet)
-                                                    - GoPlausible Facilitator
-                                                    - Tag: "x402-global-challenge"
-                                                                       │
-                                                       [Payment Verified & Reserved]
-                                                                       │
-                                                                       ▼
-                                                          State & Distributed Ledger
-                                                    - Postgres 16 (Ledger, Idempotency)
-                                                    - Redis 7 (Rate Limit, Reservations)
-                                                                       │
-                                                                       ▼
-                                                            Upstream AI Execution
-                                                    - OpenRouter Direct (Chat)
-                                                    - fal.ai (FLUX, Recraft, Seedream)
-                                                    - OpenAI / ElevenLabs (Audio Speech)
-                                                    - fal.ai Queue / OpenAI (Video MP4)
-                                                                       │
-                                                                       ▼
-                                                       Ed25519 Cryptographic Receipt
-                                                    - Header: Moltworld-Receipt
-                                                    - SHA-256 Input & Output Hashes
-```
-
----
-
-## 3. Active Model Catalog (40 Verified Frontier Models)
-
-### Chat Models (22 Active Models)
-All chat models pass exact upstream identifiers with `usage: { include: true }` and `allow_fallbacks: false`.
-
-| Model ID | Public Display Name | Upstream Model ID | Price (USDC) | Context Window |
-| :--- | :--- | :--- | :--- | :--- |
-| `gpt-6-astra` | GPT-6 Astra | `openai/gpt-6-astra` | **$0.8000** | 4,096 |
-| `gpt-6-sol` | GPT-6 Sol | `openai/gpt-6-sol` | **$0.7000** | 4,096 |
-| `gpt-5.4-pro` | GPT-5.4 Pro | `openai/gpt-5.4-pro` | **$0.6000** | 4,096 |
-| `gpt-5.2-pro` | GPT-5.2 Pro | `openai/gpt-5.2-pro` | **$0.5000** | 4,096 |
-| `gpt-5-pro` | GPT-5 Pro | `openai/gpt-5-pro` | **$0.3500** | 4,096 |
-| `o3-pro` | o3 Pro | `openai/o3-pro` | **$0.2500** | 4,096 |
-| `claude-fable-5.1` | Claude Fable 5.1 | `anthropic/claude-fable-5.1` | **$0.1500** | 4,096 |
-| `claude-opus-5.5` | Claude Opus 5.5 | `anthropic/claude-opus-5.5` | **$0.0600** | 4,096 |
-| `claude-opus-5` | Claude Opus 5 | `anthropic/claude-opus-5` | **$0.0550** | 4,096 |
-| `gpt-5.6-sol` | GPT-5.6 Sol | `openai/gpt-5.6-sol` | **$0.0400** | 4,096 |
-| `claude-sonnet-5.5` | Claude Sonnet 5.5 | `anthropic/claude-sonnet-5.5` | **$0.0400** | 4,096 |
-| `gemini-3.1-pro` | Gemini 3.1 Pro | `google/gemini-3.1-pro-preview` | **$0.0350** | 4,096 |
-| `gpt-5.6-terra` | GPT-5.6 Terra | `openai/gpt-5.6-terra` | **$0.0350** | 4,096 |
-| `claude-sonnet-5` | Claude Sonnet 5 | `anthropic/claude-sonnet-5` | **$0.0300** | 4,096 |
-| `gpt-5.4` | GPT-5.4 | `openai/gpt-5.4` | **$0.0220** | 4,096 |
-| `gpt-5.2` | GPT-5.2 | `openai/gpt-5.2` | **$0.0200** | 4,096 |
-| `claude-sonnet` | Claude Sonnet 4.5 | `anthropic/claude-sonnet-4.5` | **$0.0060** | 4,096 |
-| `gpt-4o` | GPT-4o | `openai/gpt-4o` | **$0.0050** | 4,096 |
-| `gemini-pro` | Gemini 2.5 Pro | `google/gemini-2.5-pro` | **$0.0040** | 4,096 |
-| `deepseek` | DeepSeek V3 | `deepseek/deepseek-chat` | **$0.0010** | 4,096 |
-| `gemini-flash` | Gemini 2.5 Flash | `google/gemini-2.5-flash` | **$0.0010** | 4,096 |
-| `gemini-lite` | Gemini 2.5 Flash Lite | `google/gemini-2.5-flash-lite` | **$0.0010** | 4,096 |
-
-### Image Generation Models (9 Active Models)
-Routed directly to **fal.ai** and OpenAI. Zero SVG stubs.
-
-| Model ID | Public Display Name | Provider | Upstream Model ID | Price (USDC) |
-| :--- | :--- | :--- | :--- | :--- |
-| `flux-2-pro` | Flux 2 Pro | fal | `fal-ai/flux-pro/v1.1-ultra` | **$0.2000** |
-| `flux-2-flex` | Flux 2 Flex | fal | `fal-ai/flux-pro` | **$0.1500** |
-| `recraft-v3` | Recraft V3 | fal | `fal-ai/recraft-v3` | **$0.1200** |
-| `dall-e-3` | DALL-E 3 | openai | `dall-e-3` | **$0.0800** |
-| `flux-dev` | Flux Dev | fal | `fal-ai/flux/dev` | **$0.0500** |
-| `seedream-4` | Seedream 4 | fal | `fal-ai/bytedance/seedream` | **$0.0450** |
-| `qwen-image` | Qwen-Image 2.0 | fal | `fal-ai/qwen-image` | **$0.0350** |
-| `flux-schnell` | Flux Schnell | fal | `fal-ai/flux/schnell` | **$0.0150** |
-| `dall-e-2` | DALL-E 2 | openai | `dall-e-2` | **$0.0200** |
-
-### Voice Speech Synthesis Models (3 Active Models)
-Routed to OpenAI Audio and ElevenLabs. High-fidelity audio streams.
-
-| Model ID | Public Display Name | Provider | Upstream Model ID | Price (USDC) |
-| :--- | :--- | :--- | :--- | :--- |
-| `eleven-turbo` | ElevenLabs Turbo v2.5 | elevenlabs | `eleven_turbo_v2_5` | **$0.0300** |
-| `gpt-audio-mini` | GPT Audio Mini | openai | `tts-1` | **$0.0200** |
-| `gpt-audio-hd` | GPT Audio HD | openai | `tts-1-hd` | **$0.0400** |
-
-### Video Generation Models (6 Active Models)
-Routed via **fal.ai queue** and OpenAI with async job polling.
-
-| Model ID | Public Display Name | Provider | Upstream Model ID | Price (USDC) |
-| :--- | :--- | :--- | :--- | :--- |
-| `sora-2-pro` | Sora 2 Pro | openai | `sora-2-pro` | **$1.0000** |
-| `kling-2.5` | Kling 2.5 Turbo | fal | `fal-ai/kling-video/v1.5/pro` | **$0.8000** |
-| `wan-2.1` | Wan 2.1 | fal | `fal-ai/wan-video` | **$0.6500** |
-| `hailuo-h3` | Hailuo H3 | fal | `fal-ai/minimax/video-01` | **$0.6000** |
-| `veo-2` | Veo 2 | fal | `fal-ai/veo-2` | **$0.5500** |
-| `sora-2-fast` | Sora 2 Fast | openai | `sora-2-fast` | **$0.5000** |
-
----
-
-## 4. Verifiable Cryptographic Receipts (Ed25519)
-
-Every completed inference generates a cryptographically signed receipt containing:
-1. `id`: Unique receipt identifier.
-2. `timestamp`: ISO-8601 creation time.
-3. `txid`: Algorand transaction ID that settled the x402 payment.
-4. `network`: Algorand CAIP-2 network string.
-5. `payer`: Sender address.
-6. `payTo`: Moltworld merchant receiver address.
-7. `amountUsd`: Formatted USDC cost.
-8. `amountMicroUsdc`: Integer micro-USDC (6 decimals).
-9. `upstreamProvider` & `upstreamModel`: Genuine provider and model that served the inference.
-10. `inputHash`: SHA-256 digest of normalized input payload.
-11. `outputHash`: SHA-256 digest of generated output.
-12. `signature`: Ed25519 signature over canonical JSON.
-
-Receipts are delivered in the `Moltworld-Receipt` response header, stored in PostgreSQL, and accessible via `GET /v1/receipts/:id`. The gateway's active public key is published at `GET /.well-known/moltworld-receipts.json` for independent third-party verification.
-
----
-
-## 5. Client SDKs & Integration
-
-### TypeScript SDK (`@moltworld/x402`)
-
-```typescript
-import { MoltworldClient } from "@moltworld/x402";
-
-const client = new MoltworldClient({
-  mnemonic: process.env.ALGORAND_MNEMONIC,
-  network: "mainnet",
-});
-
-// Chat with Claude Sonnet 4.5
-const chat = await client.chat({
-  model: "claude-sonnet",
-  messages: [{ role: "user", content: "Explain Algorand consensus." }],
-});
-console.log(chat.text, "Receipt:", chat.receipt.id);
-
-// Generate Image with Flux 2 Pro
-const img = await client.image({
-  model: "flux-2-pro",
-  prompt: "Futuristic neon Algorand metropolis at dusk, photorealistic 8k",
-});
-console.log("Image URL:", img.url);
-
-// Async Video Generation with Sora 2 Pro
-const video = await client.video({
-  model: "sora-2-pro",
-  prompt: "Cinematic drone sweep across misty Nordic pine mountains at golden hour",
-  duration: 5,
-  waitForCompletion: true,
-});
-console.log("Video URL:", video.url);
-```
-
-### Python SDK (`moltworld-x402`)
 
 ```python
-import os
-from moltworld_x402 import MoltworldClient
-
-client = MoltworldClient(
-    mnemonic=os.environ["ALGORAND_MNEMONIC"],
-    network="mainnet"
-)
-
-response = client.chat(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "Explain Algorand x402 micropayments."}]
-)
-print(response["content"])
-print("Receipt ID:", response["receipt"]["id"])
+from moltworld import MoltworldClient  # sdk/python
+client = MoltworldClient(mnemonic="...", max_per_request_usd=0.25, budget_usd=5)
+res = client.chat("gpt-4o", [{"role": "user", "content": "Hi"}], max_tokens=300)
 ```
 
-### Anthropic Model Context Protocol (MCP) Server
+Agents: the remote MCP server is at `https://moltworld.xyz/mcp` (quote, 402 challenge,
+caller-signed requests, receipts). The SDK also ships `moltworld-mcp`, a local MCP server that
+pays by itself within a mandate and budget. See [plugins/moltworld](plugins/moltworld).
 
-Add Moltworld tools (`moltworld_chat`, `moltworld_generate_image`, `moltworld_synthesize_speech`, `moltworld_generate_video`) to any Claude or Cursor instance:
-
-```json
-{
-  "mcpServers": {
-    "moltworld": {
-      "command": "npx",
-      "args": ["-y", "@moltworld/mcp"],
-      "env": {
-        "ALGORAND_ALLOWANCE_LOGICSIG": "<BASE64_DELEGATED_LOGICSIG>",
-        "MAX_PRICE_USDC": "0.10"
-      }
-    }
-  }
-}
-```
-
----
-
-## 6. Agent Spending Allowances (TEAL v8 LogicSig)
-
-Autonomous agents can operate without direct custody of your primary private key using Algorand LogicSig delegated signatures.
-
-Moltworld provides a built-in compiler (`src/allowances/index.ts` and UI configurator at `https://moltworld.xyz/#allowances`):
-- Payer account pre-signs a TEAL v8 contract.
-- Restricts transfers strictly to:
-  1. Asset ID: `31566704` (USDC Mainnet).
-  2. AssetReceiver: Moltworld Merchant Address.
-  3. AssetAmount: `<= Daily Limit` (e.g. $5.00 USDC).
-  4. Expiration round window.
-- The compiled LogicSig is passed to the agent or SDK. The agent submits the signed LogicSig transaction without ever having access to your root keys.
-
----
-
-## 7. Metrics & Transparency Standards
-
-Moltworld provides real-time gateway and on-chain metrics via `GET /v1/stats`:
-- **Client Organic Volume**: Genuine third-party paying users and autonomous agents.
-- **Operator Fleet Segregation**: During high-concurrency benchmarks, Moltworld deployed 52 automated operator fleet test wallets (indexed in `.mainnet_fleet.json`). Operator test traffic is cleanly segregated and tracked separately from client organic figures.
-- **Fail-Closed Guarantee**: The gateway never serves stubs, never falsifies upstream models, and strictly refuses to accept payment if upstream execution cannot be completed.
-
----
-
-## 8. Contabo VPS Automated Deployment
-
-To provision a fresh Contabo VPS (Ubuntu 22.04+ / Debian 12+):
+Raw HTTP:
 
 ```bash
-# SSH into your VPS as root
-ssh root@<YOUR_VPS_IP>
-
-# Clone repository and execute provisioning script
-git clone https://github.com/hackcat29/moltworld-x402.git /opt/moltworld-x402
-cd /opt/moltworld-x402
-bash deploy/contabo-setup.sh
+curl -s https://moltworld.xyz/v1/quote -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hi"}],"max_tokens":200}'
+# POST the same body to /v1/models/gpt-4o/chat/completions -> 402 + Payment-Required,
+# then retry with Payment-Signature from any x402 client that supports Algorand.
 ```
 
-The script automatically:
-1. Installs Node.js 22 LTS, pnpm, Nginx, UFW firewall, and Docker.
-2. Starts PostgreSQL 16 and Redis 7 via Docker Compose.
-3. Builds the TypeScript codebase.
-4. Sets up the `moltworld.service` systemd daemon with automated restart policies.
-5. Configures Nginx reverse proxy with Cloudflare Origin SSL certificates.
+## API
 
----
+| Endpoint | |
+| --- | --- |
+| `POST /v1/models/{model}/chat/completions` · `images/generations` · `audio/speech` · `videos/generations` | Paid (x402) |
+| `POST /v1/market/{slug}/call` | Paid (x402), creator APIs |
+| `POST /v1/quote` | Exact price of a body |
+| `GET /v1/models` | Catalog with upstream ids, cost basis, from-prices (`?include=unavailable` shows withheld models and why) |
+| `GET /v1/jobs/{id}` | Video job status (+ `/content` for proxied videos) |
+| `GET /v1/receipts/{requestId}` | Receipt, settlement, rebate and refund status |
+| `GET /.well-known/moltworld-receipts.json` | Receipt signing keys |
+| `POST /v1/mandates/draft` · `POST /v1/mandates` · `GET /v1/mandates/{id}` · `POST /v1/mandates/{id}/revoke` | Spending mandates |
+| `GET /v1/market` · `POST /v1/market/listings` · `GET /v1/market/creators/{address}/earnings` | Marketplace |
+| `GET /v1/stats` | Public ledger metrics with txids (operator wallets excluded) |
+| `GET /health` · `/llms.txt` · `/.well-known/x402` · `/.well-known/agent-card.json` · `/a2a` · `/mcp` | Discovery |
+
+## Catalog
+
+41 models: chat through OpenRouter (24, rates synced from OpenRouter's live price list), image
+and video through fal.ai (Veo 3.1 Fast, Kling v3, Wan 3.0, MiniMax H3, FLUX.2 Pro, Qwen Image 3,
+Seedream 5.0 Lite, Grok Imagine 2.0, Recraft V4.1/V3), OpenAI (gpt-image-1, TTS, Sora 2 Pro)
+and ElevenLabs. Each entry is named after the upstream that serves it. At startup the gateway
+checks every upstream id against the provider's catalog; anything it cannot verify, or whose
+provider key is missing, is withheld and never sold.
+
+## Architecture
+
+```
+Client / agent ──HTTPS──▶ Cloudflare (DNS, TLS, pass-through Worker)
+                              │
+                              ▼
+                 Nginx ─▶ Node 22 gateway (Hono, systemd)  ◀── one origin
+                              │  prepare: validate + quote (400 before any 402)
+                              │  commerce: replay, ledger, receipts, rebates, refunds
+                              │  x402: exact AVM scheme, GoPlausible facilitator, Bazaar
+                              │  hooks: payer/txid from facilitator results, exposure,
+                              │         mandate caps, duplicate-payment locks
+                              ├── PostgreSQL 16 (ledger)   Redis 7 (coordination)
+                              ├── workers: video polling, refunds, batched payouts
+                              └── OpenRouter · fal.ai · OpenAI · ElevenLabs
+```
+
+Development and tests use PGlite (PostgreSQL in-process), so the same SQL runs everywhere.
+
+## Development
+
+```bash
+pnpm install
+pnpm build        # typecheck gateway + SDK
+pnpm test         # unit, e2e (real x402 client + reference facilitator logic), mandates, SDK, Python interop
+pnpm test:ui      # Playwright: 6 viewports x light/dark, every interactive flow
+pnpm stack:local  # whole stack offline at http://127.0.0.1:3402 with seeded traffic
+```
+
+`pnpm stack:local` runs the gateway against a simulated Algorand ledger and a facilitator built
+from the reference `@x402/avm` logic, with mock models. It needs no keys or funds.
+
+Deployment, keys and the runbook: [docs/OPERATIONS.md](docs/OPERATIONS.md) and
+[deploy/README.md](deploy/README.md). Launch checklist (legal, tax, provider terms):
+[docs/COMPLIANCE.md](docs/COMPLIANCE.md).
 
 ## License
 

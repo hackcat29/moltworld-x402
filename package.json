@@ -1,7 +1,7 @@
 {
   "name": "moltworld-x402",
   "version": "1.0.0",
-  "description": "",
+  "description": "Moltworld: pay-per-request AI gateway on Algorand x402",
   "type": "module",
   "main": "src/server.ts",
   "scripts": {
@@ -10,18 +10,21 @@
     "test": "vitest run",
     "test:client": "tsx src/client/testClient.ts",
     "test:settle": "tsx scripts/setupAndSettleTestnet.ts",
-    "build": "tsc",
+    "build": "tsc && tsc -p sdk/js/tsconfig.json --noEmit",
     "start:prod": "node dist/server.js",
-    "deploy:contabo": "bash scripts/deploy.sh contabo",
-    "deploy:worker": "bash scripts/deploy.sh worker",
-    "mainnet:wallet": "tsx scripts/manageMainnetMerchant.ts"
+    "deploy:contabo": "bash scripts/deploy.sh",
+    "mainnet:wallet": "tsx scripts/manageMainnetMerchant.ts",
+    "stack:local": "tsx scripts/local-stack.ts",
+    "typecheck": "tsc --noEmit && tsc -p sdk/js/tsconfig.json --noEmit",
+    "test:ui": "node tests/ui/run.mjs"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/pg": "^8.23.1",
+    "playwright-core": "1.56.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1",
@@ -30,6 +33,7 @@
   "dependencies": {
     "@a2a-js/sdk": "^1.3.0",
     "@algorandfoundation/algokit-utils": "10.0.0-alpha.42",
+    "@electric-sql/pglite": "^0.5.11",
     "@hono/node-server": "^2.1.1",
     "@modelcontextprotocol/server": "^2.2.0",
     "@x402-avm/extensions": "^2.6.1",
@@ -42,6 +46,7 @@
     "hono": "^4.13.8",
     "ioredis": "^6.0.0",
     "pg": "^8.23.1",
+    "undici": "^8.12.3",
     "zod": "^4.6.5"
   }
 }

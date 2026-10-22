@@ -1,0 +1,78 @@
+/**
+ * Runs the whole gateway offline for development, demos and UI tests:
+ * a simulated Algorand ledger, a facilitator running the reference @x402/avm
+ * logic, mock upstream models, and some seeded paid traffic.
+ *
+ *   pnpm stack:local            # http://127.0.0.1:3402
+ *   PORT=4000 pnpm stack:local
+ */
+import algosdk from "algosdk";
+import { serve } from "@hono/node-server";
+import { createPayer, startHarness } from "../tests/helpers/harness.js";
+
+process.env.NODE_ENV ??= "development";
+process.env.MOCK_PROVIDERS = "true";
+process.env.SKIP_UPSTREAM_VERIFICATION = "true";
+process.env.BACKGROUND_WORKERS = "true";
+process.env.ADMIN_TOKEN ??= "local-admin";
+
+const port = Number(process.env.PORT ?? 3402);
+const harness = await startHarness();
+process.env.FACILITATOR_URL = harness.facilitatorUrl;
+process.env.ALGOD_URL = harness.algodUrl;
+process.env.PUBLIC_DOMAIN ??= `http://127.0.0.1:${port}`;
+
+const { app, init } = await import("../src/app.js");
+const { startBackgroundWorkers } = await import("../src/workers/index.js");
+const { signOwnerMessage } = await import("../src/mandates/index.js");
+const { setCreatorFetcherForTests } = await import("../src/routes/market.js");
+await init();
+startBackgroundWorkers();
+
+const appFetch = (req: Request) => app.fetch(req) as Promise<Response>;
+
+async function seed() {
+  const json = (body: unknown) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  for (let i = 0; i < 3; i++) {
+    const payer = createPayer(harness, appFetch);
+    await payer.fetch(`http://127.0.0.1/v1/models/gpt-4o/chat/completions`, json({ messages: [{ role: "user", content: `Hello #${i}` }], max_tokens: 400 }));
+    await payer.fetch(`http://127.0.0.1/v1/models/claude-sonnet-5/chat/completions`, json({ messages: [{ role: "user", content: "Summarize x402" }], max_tokens: 300 }));
+    if (i === 0) await payer.fetch(`http://127.0.0.1/v1/models/flux-2-pro/images/generations`, json({ prompt: "A lighthouse at dawn" }));
+  }
+
+  // One approved marketplace listing, served by a local stand-in for the creator API.
+  setCreatorFetcherForTests(async (_url, init) => {
+    const input = JSON.parse(new TextDecoder().decode(init.body) || "{}");
+    return { status: 200, contentType: "application/json", body: new TextEncoder().encode(JSON.stringify({ city: input.city ?? "Lagos", tempC: 31, source: "demo" })) };
+  });
+  const creator = algosdk.generateAccount();
+  const listing = {
+    action: "list",
+    creator: creator.addr.toString(),
+    slug: "weather-now",
+    name: "Weather Now",
+    description: "Current temperature for a city, as JSON. Demo listing.",
+    upstream_url: "https://weather.example.com/now",
+    price_usd: 0.002,
+    input_example: { city: "Lagos" },
+    issued_at: Math.floor(Date.now() / 1000),
+  };
+  await appFetch(new Request("http://127.0.0.1/v1/market/listings", json({ listing, creator_sig: signOwnerMessage(listing, creator.sk) })));
+  const pending = await (await appFetch(new Request("http://127.0.0.1/v1/ops/listings?status=pending", { headers: { Authorization: `Bearer ${process.env.ADMIN_TOKEN}` } }))).json();
+  for (const l of pending.data) {
+    await appFetch(
+      new Request(`http://127.0.0.1/v1/ops/listings/${l.id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.ADMIN_TOKEN}` },
+        body: JSON.stringify({ status: "approved" }),
+      })
+    );
+  }
+  const buyer = createPayer(harness, appFetch);
+  await buyer.fetch("http://127.0.0.1/v1/market/weather-now/call", json({ city: "Accra" }));
+}
+
+serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, async () => {
+  if (process.env.SEED !== "false") await seed();
+  console.log(`LOCAL STACK READY http://127.0.0.1:${port}`);
+});

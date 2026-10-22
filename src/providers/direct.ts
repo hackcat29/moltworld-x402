@@ -1,12 +1,27 @@
+import type { ModelDefinition } from "../models/registry.js";
 import {
   AIProvider,
-  ChatCompletionRequest,
-  ChatCompletionResponse,
-  ImageGenerationRequest,
-  ImageGenerationResponse,
   AudioSpeechRequest,
   AudioSpeechResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  UpstreamError,
+  UpstreamResult,
+  VideoGenerationRequest,
+  VideoJobStatus,
+  VideoJobSubmission,
+  upstreamFetch,
 } from "./types.js";
+
+const MIME: Record<string, string> = {
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  opus: "audio/ogg",
+  aac: "audio/aac",
+  flac: "audio/flac",
+};
+
+const SORA_SIZES: Record<string, string> = { "16:9": "1280x720", "9:16": "720x1280" };
 
 export class DirectOpenAIProvider implements AIProvider {
   readonly id = "openai";
@@ -16,149 +31,116 @@ export class DirectOpenAIProvider implements AIProvider {
     private readonly timeoutMs: number = 25000
   ) {}
 
-  async chatComplete(
-    modelIdentifier: string,
-    request: ChatCompletionRequest,
-    modelSlug: string
-  ): Promise<ChatCompletionResponse> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-
-    try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: modelIdentifier,
-          messages: request.messages,
-          temperature: request.temperature,
-          max_tokens: request.max_tokens,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`OpenAI chat error: ${err.replace(this.apiKey, "[REDACTED]")}`);
-      }
-
-      const data = (await response.json()) as any;
-      data.model = modelSlug;
-      data.upstreamProvider = "openai";
-      data.upstreamModel = modelIdentifier;
-      return data;
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        throw new Error(`OpenAI chat request timed out after ${this.timeoutMs}ms.`);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
-    }
+  private auth() {
+    return { Authorization: `Bearer ${this.apiKey}` };
   }
 
-  async generateImage(
-    modelIdentifier: string,
-    request: ImageGenerationRequest,
-    modelSlug: string
-  ): Promise<ImageGenerationResponse> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-
-    try {
-      const response = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: modelIdentifier,
-          prompt: request.prompt,
-          n: request.n || 1,
-          size: request.size || "1024x1024",
-          response_format: request.response_format || "url",
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`OpenAI image error: ${err.replace(this.apiKey, "[REDACTED]")}`);
-      }
-
-      const data = (await response.json()) as ImageGenerationResponse;
-      data.upstreamProvider = "openai";
-      data.upstreamModel = modelIdentifier;
-      return data;
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        throw new Error(`OpenAI image generation timed out after ${this.timeoutMs}ms.`);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
-    }
+  async generateImage(model: ModelDefinition, request: ImageGenerationRequest): Promise<UpstreamResult<ImageGenerationResponse>> {
+    const res = await upstreamFetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: { ...this.auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: model.upstreamModelId,
+        prompt: request.prompt,
+        n: request.n ?? 1,
+        size: request.size ?? "1024x1024",
+        quality: "medium",
+      }),
+      timeoutMs: Math.max(this.timeoutMs, 90000),
+      secret: this.apiKey,
+      label: "OpenAI images",
+    });
+    const data: any = await res.json();
+    const items = (data.data ?? []).filter((d: any) => d?.b64_json || d?.url);
+    if (!items.length) throw new UpstreamError("OpenAI images returned no images.");
+    return {
+      body: {
+        created: Number(data.created ?? Math.floor(Date.now() / 1000)),
+        data: items.map((d: any) => ({ url: d.url, b64_json: d.b64_json, revised_prompt: d.revised_prompt })),
+      },
+      upstreamProvider: "openai",
+      upstreamModel: model.upstreamModelId,
+    };
   }
 
-  async generateSpeech(
-    modelIdentifier: string,
-    request: AudioSpeechRequest,
-    modelSlug: string
-  ): Promise<AudioSpeechResponse> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-
-    try {
-      const format = request.response_format || "mp3";
-      const response = await fetch("https://api.openai.com/v1/audio/speech", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: modelIdentifier,
-          input: request.input,
-          voice: request.voice || "alloy",
-          response_format: format,
-          speed: request.speed || 1.0,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`OpenAI TTS error: ${err.replace(this.apiKey, "[REDACTED]")}`);
-      }
-
-      const audioBytes = await response.arrayBuffer();
-      const base64Audio = Buffer.from(audioBytes).toString("base64");
-      const dataUrl = `data:audio/${format};base64,${base64Audio}`;
-
-      return {
-        id: `audio-openai-${Date.now()}`,
+  async generateSpeech(model: ModelDefinition, request: AudioSpeechRequest): Promise<UpstreamResult<AudioSpeechResponse>> {
+    const format = request.response_format ?? "mp3";
+    const res = await upstreamFetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: { ...this.auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: model.upstreamModelId,
+        input: request.input,
+        voice: request.voice ?? "alloy",
+        response_format: format,
+        speed: request.speed ?? 1,
+      }),
+      timeoutMs: this.timeoutMs,
+      secret: this.apiKey,
+      label: "OpenAI speech",
+    });
+    const audio = Buffer.from(await res.arrayBuffer());
+    if (!audio.length) throw new UpstreamError("OpenAI speech returned empty audio.");
+    return {
+      body: {
         object: "audio.speech",
         created: Math.floor(Date.now() / 1000),
-        model: modelSlug,
-        audio_url: dataUrl,
-        audio_b64: base64Audio,
+        model: model.slug,
         format,
-        duration_seconds: parseFloat((request.input.length / 15).toFixed(2)),
+        mime_type: MIME[format] ?? "application/octet-stream",
+        audio_b64: audio.toString("base64"),
         character_count: request.input.length,
-        upstreamProvider: "openai",
-        upstreamModel: modelIdentifier,
-      };
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        throw new Error(`OpenAI speech generation timed out after ${this.timeoutMs}ms.`);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
+      },
+      upstreamProvider: "openai",
+      upstreamModel: model.upstreamModelId,
+    };
+  }
+
+  async submitVideo(model: ModelDefinition, request: VideoGenerationRequest): Promise<VideoJobSubmission> {
+    const form = new FormData();
+    form.set("model", model.upstreamModelId);
+    form.set("prompt", request.prompt);
+    form.set("seconds", String(request.duration ?? 4));
+    form.set("size", SORA_SIZES[request.aspect_ratio ?? "16:9"] ?? "1280x720");
+    const res = await upstreamFetch("https://api.openai.com/v1/videos", {
+      method: "POST",
+      headers: this.auth(),
+      body: form,
+      timeoutMs: this.timeoutMs,
+      secret: this.apiKey,
+      label: "OpenAI videos",
+    });
+    const data: any = await res.json();
+    if (!data.id) throw new UpstreamError("OpenAI videos response is missing an id.");
+    return { upstreamJobId: String(data.id) };
+  }
+
+  async getVideoStatus(_model: ModelDefinition, upstreamJobId: string): Promise<VideoJobStatus> {
+    const res = await upstreamFetch(`https://api.openai.com/v1/videos/${encodeURIComponent(upstreamJobId)}`, {
+      headers: this.auth(),
+      timeoutMs: 15000,
+      secret: this.apiKey,
+      label: "OpenAI video status",
+    });
+    const data: any = await res.json();
+    switch (data.status) {
+      case "queued":
+        return { state: "queued" };
+      case "in_progress":
+        return { state: "processing" };
+      case "completed":
+        return { state: "completed", requiresProxy: true };
+      default:
+        return { state: "failed", error: `OpenAI video ${data.status ?? "failed"}: ${data.error?.message ?? "no detail"}` };
     }
+  }
+
+  async fetchVideoContent(_model: ModelDefinition, upstreamJobId: string): Promise<Response> {
+    return upstreamFetch(`https://api.openai.com/v1/videos/${encodeURIComponent(upstreamJobId)}/content`, {
+      headers: this.auth(),
+      timeoutMs: 120000,
+      secret: this.apiKey,
+      label: "OpenAI video content",
+    });
   }
 }
