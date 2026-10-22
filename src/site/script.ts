@@ -293,14 +293,63 @@ export const SITE_JS = String.raw`
 
   // ---------------------------------------------------------------- usage
   if ($("sPaid") || $("recentRows")) {
+    const set = (id, v) => { const n = $(id); if (n) n.textContent = v; };
+    const fmtUsd = (raw) => {
+      if (!raw || raw === "-") return "-";
+      const num = parseFloat(String(raw).replace(/[^0-9.]/g, ""));
+      return isNaN(num) ? String(raw) : "$" + num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const renderFacilitator = (f) => {
+      if (!f) return;
+      if (f.success_rate != null) set("sSuccessRate", f.success_rate + "%");
+      if (f.avg_settle_ms != null) set("sAvgLatency", f.avg_settle_ms + " ms");
+      if (f.avg_ticket_usd != null) set("sAvgTicket", "$" + Number(f.avg_ticket_usd).toFixed(2));
+      const topBody = $("topModelRows");
+      if (topBody && f.top_models && f.top_models.length) {
+        const modelRows = f.top_models.map((m) => el("tr", {},
+          el("td", { "data-label": "Model", text: m.model }),
+          el("td", { "data-label": "Settles", text: Number(m.settles).toLocaleString() }),
+          el("td", { "data-label": "Volume", text: "$" + Number(m.volume_usdc).toFixed(2) }),
+          el("td", { "data-label": "Price", text: "$" + m.price_usdc + " USDC" })
+        ));
+        topBody.replaceChildren(...modelRows);
+      }
+    };
+
     api("/v1/stats").then(({ res, body }) => {
       if (!res.ok) return;
       const s = body.metrics;
-      const set = (id, v) => { const n = $(id); if (n) n.textContent = v; };
-      set("sPaid", s.paid_requests); set("sPaid24", s.paid_requests_24h);
-      set("sGross", s.gross_usdc); set("sRebated", s.rebated_usdc); set("sNet", s.net_revenue_usdc);
-      set("sWallets", s.unique_paying_wallets); set("sRepeat", Math.round(s.repeat_payer_rate * 100) + "%");
-      set("sRefunds", s.refunded_usdc);
+      set("sPaid", typeof s.paid_requests === "number" ? s.paid_requests.toLocaleString() : s.paid_requests);
+      set("sPaid24", typeof s.paid_requests_24h === "number" ? s.paid_requests_24h.toLocaleString() : s.paid_requests_24h);
+      set("sGross", fmtUsd(s.gross_usdc)); set("sRebated", fmtUsd(s.rebated_usdc)); set("sNet", fmtUsd(s.net_revenue_usdc));
+      set("sWallets", typeof s.unique_paying_wallets === "number" ? s.unique_paying_wallets.toLocaleString() : s.unique_paying_wallets);
+      set("sRepeat", Math.round((s.repeat_payer_rate || 0) * 100) + "%");
+      set("sRefunds", fmtUsd(s.refunded_usdc));
+
+      if (body.facilitator) {
+        renderFacilitator(body.facilitator);
+      } else {
+        // Direct fallback to facilitator data endpoint if server ran offline
+        fetch("https://facilitator.goplausible.xyz/data/merchants/414f1538ce0d6de4")
+          .then((r) => r.json())
+          .then((fdata) => {
+            if (!fdata || typeof fdata.settles !== "number") return;
+            renderFacilitator({
+              success_rate: (fdata.successRate * 100).toFixed(1),
+              avg_settle_ms: Math.round(fdata.avgSettleMs),
+              avg_ticket_usd: fdata.avgTicket,
+              top_models: (fdata.resources || []).slice(0, 15).map((r) => ({
+                model: r.url.split("/models/")[1]?.replace(/\/(chat|images|audio|videos)\/.*$/, "") || r.url,
+                settles: r.settles,
+                volume_usdc: r.volume,
+                price_usdc: r.price,
+              })),
+            });
+          })
+          .catch(() => {});
+      }
+
       const tbody = $("recentRows");
       if (!tbody) return;
       const rows = body.recent_settlements.map((r) => el("tr", {},

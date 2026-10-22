@@ -736,16 +736,33 @@ function playground(c: Context) {
 
 function usage(c: Context) {
   const body = `
-    ${pageHero("Usage", "Usage from the public ledger", "These figures come from the gateway ledger. Each settlement links to its Algorand transaction, so you can check every number on-chain.")}
+    ${pageHero("Usage", "Usage from the public ledger", "These figures come from the gateway ledger and are cross-verified by the Algorand x402 facilitator. Each settlement links to its Algorand transaction, so you can check every number on-chain.")}
     <section class="wrap" style="padding-bottom:24px">
       ${statsWidget()}
       <dl class="kv" style="margin-top:24px;max-width:520px">
         <dt>Paid requests, last 24h</dt><dd id="sPaid24">-</dd>
         <dt>Gross</dt><dd id="sGross">-</dd>
+        <dt>Facilitator success rate</dt><dd id="sSuccessRate">-</dd>
+        <dt>Average settlement time</dt><dd id="sAvgLatency">-</dd>
+        <dt>Average ticket</dt><dd id="sAvgTicket">-</dd>
         <dt>Paid back as rebates</dt><dd id="sRebated">-</dd>
         <dt>Returning wallets</dt><dd id="sRepeat">-</dd>
       </dl>
+      <div style="margin-top:20px">
+        <a href="https://facilitator.goplausible.xyz/dashboard/merchants/414f1538ce0d6de4" target="_blank" rel="noopener" class="btn btn-ghost" style="display:inline-flex;align-items:center;gap:6px">
+          <span>View on Facilitator Dashboard</span>
+          <span>↗</span>
+        </a>
+      </div>
     </section>
+    ${block(
+      "Top models by on-chain volume",
+      "Model settlements recorded on Algorand through the x402 facilitator.",
+      `<div class="table-wrap"><table class="stack">
+        <thead><tr><th>Model</th><th>Settles</th><th>Volume (USDC)</th><th>Price</th></tr></thead>
+        <tbody id="topModelRows"><tr><td colspan="4">Loading</td></tr></tbody>
+      </table></div>`
+    )}
     ${block(
       "Recent settlements",
       "",

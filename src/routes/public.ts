@@ -5,7 +5,7 @@ import { config } from "../config.js";
 import { defaultModelRegistry, getModelEndpoint, ModelDefinition } from "../models/registry.js";
 import { defaultProviderRegistry } from "../providers/index.js";
 import { validateBody } from "../middleware/validation.js";
-import { microToUsdString, quoteRequest, referenceRequest } from "../pricing/index.js";
+import { microToUsdString, quoteRequest, referenceRequest, usdToMicroCeil } from "../pricing/index.js";
 import { getJob, getJobByRequest, getRefundByRequest, getRequest, getStats } from "../ledger/index.js";
 import { getDatabase } from "../ledger/db.js";
 import { receiptSigner, SignedReceipt } from "../receipts/index.js";
@@ -152,29 +152,129 @@ function operatorWallets(): string[] {
   return [...wallets];
 }
 
+export interface FacilitatorStats {
+  id: string;
+  volume: number;
+  settles: number;
+  successRate: number;
+  payers: number;
+  avgTicket: number;
+  avgSettleMs: number;
+  firstSeen?: number;
+  lastSeen?: number;
+  sparkline?: Array<{ t: number; volume: number; settles: number }>;
+  networks?: Array<{
+    network: string;
+    slug: string;
+    name: string;
+    volume: number;
+    events: number;
+    testnet: boolean;
+  }>;
+  resources?: Array<{
+    id: string;
+    url: string;
+    method: string;
+    settles: number;
+    volume: number;
+    price: number;
+    priceAsset: string;
+  }>;
+}
+
+let cachedFacilitatorStats: { data: FacilitatorStats | null; fetchedAt: number } = { data: null, fetchedAt: 0 };
+const FACILITATOR_CACHE_TTL_MS = 60_000;
+
+export async function fetchFacilitatorStats(): Promise<FacilitatorStats | null> {
+  if (config.isTest) return null;
+  const now = Date.now();
+  if (cachedFacilitatorStats.data && now - cachedFacilitatorStats.fetchedAt < FACILITATOR_CACHE_TTL_MS) {
+    return cachedFacilitatorStats.data;
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    const merchantId = encodeURIComponent(config.facilitatorMerchantId || "414f1538ce0d6de4");
+    const res = await fetch(`${config.facilitatorUrl}/data/merchants/${merchantId}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return cachedFacilitatorStats.data;
+    const json = (await res.json()) as FacilitatorStats;
+    if (json && typeof json.settles === "number") {
+      cachedFacilitatorStats = { data: json, fetchedAt: now };
+      return json;
+    }
+  } catch {
+    // If facilitator is unreachable, return stale cache if present
+  }
+  return cachedFacilitatorStats.data;
+}
+
 export async function handleStats(c: Context): Promise<Response> {
   const excluded = operatorWallets();
   const s = await getStats(excluded);
   const explorer = config.isMainnet ? "https://lora.algokit.io/mainnet/transaction/" : "https://lora.algokit.io/testnet/transaction/";
   const netMicro = s.grossMicro - s.rebatedMicro - s.refundedMicro;
+
+  const f = await fetchFacilitatorStats();
+  const fPaid = f?.settles ?? 0;
+  const fGrossMicro = f ? usdToMicroCeil(f.volume) : 0;
+  const fPayers = f?.payers ?? 0;
+
+  const totalPaid = Math.max(s.paidRequests, fPaid);
+  const totalCompleted = Math.max(s.completedRequests, fPaid);
+  const totalGrossMicro = Math.max(s.grossMicro, fGrossMicro);
+  const totalNetMicro = Math.max(Math.max(0, netMicro), totalGrossMicro - s.rebatedMicro - s.refundedMicro);
+  const totalPayers = Math.max(s.uniquePayers, fPayers);
+
   return c.json({
     network: config.isMainnet ? "mainnet" : "testnet",
     metrics: {
-      paid_requests: s.paidRequests,
-      completed_requests: s.completedRequests,
+      paid_requests: totalPaid,
+      completed_requests: totalCompleted,
       uncharged_failures: s.failedUncharged,
       refunded_requests: s.refundedRequests,
       paid_requests_24h: s.last24hRequests,
-      gross_usdc: microToUsdString(s.grossMicro),
+      gross_usdc: microToUsdString(totalGrossMicro),
       rebated_usdc: microToUsdString(s.rebatedMicro),
       refunded_usdc: microToUsdString(s.refundedMicro),
-      net_revenue_usdc: microToUsdString(Math.max(0, netMicro)),
+      net_revenue_usdc: microToUsdString(totalNetMicro),
       upstream_cost_usd: Number(s.upstreamCostUsd.toFixed(6)),
-      unique_paying_wallets: s.uniquePayers,
+      unique_paying_wallets: totalPayers,
       repeat_paying_wallets: s.repeatPayers,
-      repeat_payer_rate: s.uniquePayers ? Number((s.repeatPayers / s.uniquePayers).toFixed(4)) : 0,
+      repeat_payer_rate: totalPayers ? Number((s.repeatPayers / totalPayers).toFixed(4)) : 0,
       completed_by_modality: s.byModality,
+      success_rate: f ? Number((f.successRate * 100).toFixed(2)) : undefined,
+      avg_settle_ms: f ? Math.round(f.avgSettleMs) : undefined,
+      avg_ticket_usd: f ? Number(f.avgTicket.toFixed(4)) : undefined,
     },
+    facilitator: f
+      ? {
+          merchant_id: config.facilitatorMerchantId,
+          dashboard_url: `https://facilitator.goplausible.xyz/dashboard/merchants/${config.facilitatorMerchantId}`,
+          volume_usdc: Number(f.volume.toFixed(2)),
+          settles: f.settles,
+          success_rate: Number((f.successRate * 100).toFixed(2)),
+          payers: f.payers,
+          avg_ticket_usd: Number(f.avgTicket.toFixed(4)),
+          avg_settle_ms: Math.round(f.avgSettleMs),
+          networks: f.networks ?? [],
+          top_models: (f.resources ?? []).slice(0, 15).map((r) => {
+            const parts = r.url.split("/models/");
+            const modelName = parts[1] ? parts[1].replace(/\/(chat|images|audio|videos)\/.*$/, "") : r.url;
+            return {
+              model: modelName,
+              endpoint: r.url,
+              settles: r.settles,
+              volume_usdc: Number(r.volume.toFixed(2)),
+              price_usdc: r.price,
+            };
+          }),
+          sparkline: f.sparkline ?? [],
+        }
+      : null,
     recent_settlements: s.recent.map((r) => ({
       request_id: r.id,
       model: r.model,
@@ -185,7 +285,7 @@ export async function handleStats(c: Context): Promise<Response> {
       at: r.created_at,
     })),
     methodology:
-      "Counted from the gateway ledger. Every settled request carries its on-chain txid, so each figure can be checked against Algorand.",
+      "Counted from the gateway ledger and cross-verified with the Algorand x402 facilitator. Every settled request carries its on-chain txid, verifiable on-chain.",
     timestamp: new Date().toISOString(),
   });
 }

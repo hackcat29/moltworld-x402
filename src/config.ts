@@ -47,6 +47,8 @@ export interface GatewayConfig {
   priceMinFloor: number;
   rebateMinPayoutUsd: number;
   creatorPayoutMinUsd: number;
+  isTest: boolean;
+  facilitatorMerchantId: string;
   marketplaceFeePercent: number;
   maxInflightPerPayer: number;
   mockProviders: boolean;
@@ -86,6 +88,8 @@ export const config: GatewayConfig = {
   publicDomain: (process.env.PUBLIC_DOMAIN || "https://moltworld.xyz").replace(/\/+$/, ""),
   docsUrl: (process.env.DOCS_URL || "https://docs.moltworld.xyz").replace(/\/+$/, ""),
   facilitatorUrl: process.env.FACILITATOR_URL || "https://facilitator.goplausible.xyz",
+  facilitatorMerchantId: process.env.FACILITATOR_MERCHANT_ID?.trim() || "414f1538ce0d6de4",
+  isTest,
   isMainnet,
   networkCaip2: (isMainnet
     ? ALGORAND_MAINNET_FACILITATOR_CAIP2
