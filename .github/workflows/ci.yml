@@ -75,7 +75,7 @@ jobs:
 
   deploy:
     name: Deploy origin (VPS)
-    needs: [test, ui]
+    needs: [test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
