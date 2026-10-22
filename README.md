@@ -5,8 +5,6 @@ Pay per request in USDC on Algorand. Zero subscriptions, zero prepaid credits, 1
 
 **Repository:** [hackcat29/moltworld-x402](https://github.com/hackcat29/moltworld-x402)
 
-This repository was created because the original GitHub account, `UncleTom29`, was suspended. It preserves the original Moltworld commit history and is the current home for development and deployment.
-
 - **Public Domain**: [https://moltworld.xyz](https://moltworld.xyz)
 - **Deployment**: Contabo VPS (Ubuntu 22.04 LTS / Debian 12) + Cloudflare Reverse Proxy + Docker (PostgreSQL 16 & Redis 7)
 - **Modalities**: Multimodal: Chat Completions (22 models), Image Generation (9 models), Voice Speech Synthesis (3 models), and Video Synthesis (6 models)
