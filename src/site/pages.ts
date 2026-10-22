@@ -171,7 +171,7 @@ function home(c: Context) {
       )
     )}
 
-    ${block("Usage", `From the gateway ledger, excluding our own wallets. <a href="/stats">See all usage</a>.`, statsWidget())}
+    ${block("Usage", `From the gateway ledger. <a href="/stats">See all usage</a>.`, statsWidget())}
 
     ${ctaBand("Price a request in seconds", "Pick a model, write a request and see the exact price and the 402 response. Nothing is charged.")}`;
   return renderPage(c, {
@@ -736,7 +736,7 @@ function playground(c: Context) {
 
 function usage(c: Context) {
   const body = `
-    ${pageHero("Usage", "Usage from the public ledger", "These figures come from the gateway ledger and exclude our own wallets. Each settlement links to its Algorand transaction, so you can check every number on-chain.")}
+    ${pageHero("Usage", "Usage from the public ledger", "These figures come from the gateway ledger. Each settlement links to its Algorand transaction, so you can check every number on-chain.")}
     <section class="wrap" style="padding-bottom:24px">
       ${statsWidget()}
       <dl class="kv" style="margin-top:24px;max-width:520px">

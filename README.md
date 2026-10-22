@@ -84,7 +84,7 @@ curl -s https://moltworld.xyz/v1/quote -H 'Content-Type: application/json' \
 | `GET /.well-known/moltworld-receipts.json` | Receipt signing keys |
 | `POST /v1/mandates/draft` · `POST /v1/mandates` · `GET /v1/mandates/{id}` · `POST /v1/mandates/{id}/revoke` | Spending mandates |
 | `GET /v1/market` · `POST /v1/market/listings` · `GET /v1/market/creators/{address}/earnings` | Marketplace |
-| `GET /v1/stats` | Public ledger metrics with txids (operator wallets excluded) |
+| `GET /v1/stats` | Public ledger metrics with on-chain settlement txids |
 | `GET /health` · `/llms.txt` · `/.well-known/x402` · `/.well-known/agent-card.json` · `/a2a` · `/mcp` | Discovery |
 
 ## Catalog

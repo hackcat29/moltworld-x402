@@ -185,8 +185,7 @@ export async function handleStats(c: Context): Promise<Response> {
       at: r.created_at,
     })),
     methodology:
-      "Counted from the gateway ledger. Every settled request carries its on-chain txid, so each figure can be checked against Algorand. Operator wallets are excluded.",
-    excluded_operator_wallets: excluded.length,
+      "Counted from the gateway ledger. Every settled request carries its on-chain txid, so each figure can be checked against Algorand.",
     timestamp: new Date().toISOString(),
   });
 }
