@@ -118,11 +118,17 @@ systemctl enable moltworld
 log "Nginx and SSL"
 mkdir -p /var/www/html /etc/nginx/ssl
 cp deploy/nginx-moltworld.conf /etc/nginx/sites-available/moltworld
-ln -sf /etc/nginx/sites-available/moltworld /etc/nginx/sites-enabled/moltworld
-rm -f /etc/nginx/sites-enabled/default
 
-# Generate self-signed certificate if no certificate exists yet
-if [ ! -f /etc/nginx/ssl/moltworld.crt ]; then
+# Remove conflicting older configs in sites-enabled (e.g. default, moltworld.conf)
+rm -f /etc/nginx/sites-enabled/*
+ln -sf /etc/nginx/sites-available/moltworld /etc/nginx/sites-enabled/moltworld
+
+# If a Let's Encrypt certificate exists, use it
+if [ -f /etc/letsencrypt/live/moltworld.xyz/fullchain.pem ]; then
+  ln -sf /etc/letsencrypt/live/moltworld.xyz/fullchain.pem /etc/nginx/ssl/moltworld.crt
+  ln -sf /etc/letsencrypt/live/moltworld.xyz/privkey.pem /etc/nginx/ssl/moltworld.key
+# Generate temporary self-signed certificate if no certificate exists yet
+elif [ ! -f /etc/nginx/ssl/moltworld.crt ]; then
   warn "Generating temporary certificate in /etc/nginx/ssl/."
   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -keyout /etc/nginx/ssl/moltworld.key -out /etc/nginx/ssl/moltworld.crt -subj "/CN=moltworld.xyz"
