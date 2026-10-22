@@ -1,4 +1,6 @@
 import { Context } from "hono";
+import fs from "fs";
+import path from "path";
 import { config } from "../config.js";
 import { defaultModelRegistry, getModelEndpoint, getModelDiscoveryDescription } from "../models/registry.js";
 import { defaultProviderRegistry } from "../providers/index.js";
@@ -9,6 +11,9 @@ import {
   validateVideoRequest,
 } from "../middleware/validation.js";
 import { ModelModality } from "../providers/types.js";
+import { calculateRequestQuote } from "../pricing/index.js";
+import { dbStore } from "../store/db.js";
+import { receiptService } from "../receipts/index.js";
 
 const startTime = Date.now();
 let isGatewayReady = false;
@@ -23,14 +28,32 @@ export function isReady(): boolean {
   return isGatewayReady;
 }
 
+function loadOperatorWallets(): Set<string> {
+  const wallets = new Set<string>();
+  if (config.payToAddress) wallets.add(config.payToAddress);
+
+  const fleetPath = path.join(process.cwd(), ".mainnet_fleet.json");
+  if (fs.existsSync(fleetPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(fleetPath, "utf-8"));
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item?.address) wallets.add(item.address);
+        }
+      }
+    } catch {}
+  }
+  return wallets;
+}
+
 export function handleHealth(c: Context): Response {
   if (!isGatewayReady) {
     return c.json(
       {
         status: "degraded",
         ready: false,
-        version: "1.0.0",
-        product: "Moltworld",
+        version: "2.0.0",
+        product: "Moltworld x402 AI Gateway",
         error: gatewayInitError || "x402 Facilitator unavailable. Gateway failing closed to protect user funds.",
         timestamp: new Date().toISOString(),
       },
@@ -43,7 +66,7 @@ export function handleHealth(c: Context): Response {
   return c.json({
     status: "healthy",
     ready: true,
-    version: "1.0.0",
+    version: "2.0.0",
     product: "Moltworld",
     public_domain: config.publicDomain,
     network: config.isMainnet ? "mainnet" : "testnet",
@@ -53,7 +76,7 @@ export function handleHealth(c: Context): Response {
     facilitator: config.facilitatorUrl,
     bazaar_enabled: true,
     tag: "x402-global-challenge",
-    modalities_supported: ["chat"],
+    modalities_supported: ["chat", "image", "voice", "video"],
     enabled_models: models.length,
     models_by_modality: {
       chat: models.filter((m) => m.modality === "chat").length,
@@ -61,6 +84,9 @@ export function handleHealth(c: Context): Response {
       voice: models.filter((m) => m.modality === "voice").length,
       video: models.filter((m) => m.modality === "video").length,
     },
+    pricing_model: "cost_plus_dynamic_quote",
+    margin_percent: Math.round(config.priceMargin * 100),
+    receipt_verification_endpoint: `${config.publicDomain}/.well-known/moltworld-receipts.json`,
     timestamp: new Date().toISOString(),
     uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
   });
@@ -76,18 +102,23 @@ export function handleListModels(c: Context): Response {
 
   return c.json({
     object: "list",
-    data: models.map((m) => ({
-      id: m.slug,
-      name: m.displayName,
-      modality: m.modality,
-      price: m.price,
-      endpoint: getModelEndpoint(m),
-      max_tokens: m.limits.maxOutputTokens,
-      max_input_tokens: m.limits.maxInputTokens,
-      max_duration_seconds: m.limits.maxDurationSeconds,
-      description: getModelDiscoveryDescription(m),
-      tags: m.tags || [],
-    })),
+data: models.map((m) => {
+      const baseQuote = calculateRequestQuote(m);
+      return {
+        id: m.slug,
+        name: m.displayName,
+        modality: m.modality,
+        price: m.price,
+        base_quote: baseQuote.formattedPrice,
+        rates: m.rates,
+        endpoint: getModelEndpoint(m),
+        max_tokens: m.limits.maxOutputTokens,
+        max_input_tokens: m.limits.maxInputTokens,
+        max_duration_seconds: m.limits.maxDurationSeconds,
+        description: getModelDiscoveryDescription(m),
+        tags: m.tags || [],
+      };
+    }),
   });
 }
 
@@ -161,6 +192,36 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
     );
   }
 
+  const requestId = c.req.header("x-request-id") || `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const idempotencyKey = c.req.header("idempotency-key");
+
+  if (idempotencyKey) {
+    const existing = await dbStore.getRequestByIdempotencyKey(idempotencyKey);
+    if (existing && existing.status === "completed" && existing.response_payload) {
+      return c.json(existing.response_payload);
+    }
+  }
+
+  const requestHash = receiptService.hashData(validationResult.request);
+  const quote = calculateRequestQuote(model, validationResult.request);
+  const payer = c.req.header("x-payer-address") || "anonymous-payer";
+
+  await dbStore.saveRequest({
+    id: requestId,
+    idempotency_key: idempotencyKey,
+    payer_address: payer,
+    pay_to_address: config.payToAddress,
+    network: config.networkCaip2,
+    txid: c.req.header("x-txid") || null,
+    model_slug: model.slug,
+    modality: "chat",
+    quote_amount_usd: quote.finalPriceUsd,
+    quote_microusdc: quote.microUsdc,
+    payment_flow: "authorization",
+    status: "pending",
+    request_hash: requestHash,
+  });
+
   const provider = defaultProviderRegistry.getProvider(model.provider);
   try {
     const completion = await provider.chatComplete(
@@ -168,8 +229,43 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
       validationResult.request,
       model.slug
     );
-    return c.json(completion);
+
+    const responseHash = receiptService.hashData(completion);
+    const receipt = receiptService.signReceipt({
+      requestId,
+      txid: c.req.header("x-txid") || `tx-${Date.now()}`,
+      network: config.networkCaip2,
+      payer,
+      payTo: config.payToAddress,
+      amountUsd: quote.formattedPrice,
+      amountMicroUsdc: quote.microUsdc,
+      modelSlug: model.slug,
+      modality: "chat",
+      upstreamProvider: completion.upstreamProvider || model.provider,
+      upstreamModel: completion.upstreamModel || model.upstreamModelId,
+      requestSha256: requestHash,
+      responseSha256: responseHash,
+    });
+
+    await dbStore.updateRequestStatus(requestId, "completed", {
+      upstream_provider: completion.upstreamProvider || model.provider,
+      upstream_model: completion.upstreamModel || model.upstreamModelId,
+      upstream_cost_usd: completion.upstreamCostUsd,
+      response_hash: responseHash,
+      response_payload: completion,
+    });
+
+    c.header("Moltworld-Receipt", JSON.stringify(receipt));
+    return c.json({
+      ...completion,
+      moltworld: {
+        receipt,
+      },
+    });
   } catch (err: any) {
+    await dbStore.updateRequestStatus(requestId, "failed", {
+      error_message: err.message,
+    });
     return c.json(
       {
         error: {
@@ -246,6 +342,36 @@ export async function handleImageGeneration(c: Context): Promise<Response> {
     );
   }
 
+  const requestId = c.req.header("x-request-id") || `img-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const idempotencyKey = c.req.header("idempotency-key");
+
+  if (idempotencyKey) {
+    const existing = await dbStore.getRequestByIdempotencyKey(idempotencyKey);
+    if (existing && existing.status === "completed" && existing.response_payload) {
+      return c.json(existing.response_payload);
+    }
+  }
+
+  const requestHash = receiptService.hashData(validationResult.request);
+  const quote = calculateRequestQuote(model, validationResult.request);
+  const payer = c.req.header("x-payer-address") || "anonymous-payer";
+
+  await dbStore.saveRequest({
+    id: requestId,
+    idempotency_key: idempotencyKey,
+    payer_address: payer,
+    pay_to_address: config.payToAddress,
+    network: config.networkCaip2,
+    txid: c.req.header("x-txid") || null,
+    model_slug: model.slug,
+    modality: "image",
+    quote_amount_usd: quote.finalPriceUsd,
+    quote_microusdc: quote.microUsdc,
+    payment_flow: "upfront",
+    status: "settled",
+    request_hash: requestHash,
+  });
+
   const provider = defaultProviderRegistry.getProvider(model.provider);
   try {
     if (!provider.generateImage) {
@@ -256,8 +382,43 @@ export async function handleImageGeneration(c: Context): Promise<Response> {
       validationResult.request,
       model.slug
     );
-    return c.json(response);
+
+    const responseHash = receiptService.hashData(response);
+    const receipt = receiptService.signReceipt({
+      requestId,
+      txid: c.req.header("x-txid") || `tx-${Date.now()}`,
+      network: config.networkCaip2,
+      payer,
+      payTo: config.payToAddress,
+      amountUsd: quote.formattedPrice,
+      amountMicroUsdc: quote.microUsdc,
+      modelSlug: model.slug,
+      modality: "image",
+      upstreamProvider: response.upstreamProvider || model.provider,
+      upstreamModel: response.upstreamModel || model.upstreamModelId,
+      requestSha256: requestHash,
+      responseSha256: responseHash,
+    });
+
+    await dbStore.updateRequestStatus(requestId, "completed", {
+      upstream_provider: response.upstreamProvider || model.provider,
+      upstream_model: response.upstreamModel || model.upstreamModelId,
+      upstream_cost_usd: response.upstreamCostUsd,
+      response_hash: responseHash,
+      response_payload: response,
+    });
+
+    c.header("Moltworld-Receipt", JSON.stringify(receipt));
+    return c.json({
+      ...response,
+      moltworld: {
+        receipt,
+      },
+    });
   } catch (err: any) {
+    await dbStore.updateRequestStatus(requestId, "failed", {
+      error_message: err.message,
+    });
     return c.json(
       {
         error: {
@@ -334,6 +495,36 @@ export async function handleAudioSpeech(c: Context): Promise<Response> {
     );
   }
 
+  const requestId = c.req.header("x-request-id") || `audio-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const idempotencyKey = c.req.header("idempotency-key");
+
+  if (idempotencyKey) {
+    const existing = await dbStore.getRequestByIdempotencyKey(idempotencyKey);
+    if (existing && existing.status === "completed" && existing.response_payload) {
+      return c.json(existing.response_payload);
+    }
+  }
+
+  const requestHash = receiptService.hashData(validationResult.request);
+  const quote = calculateRequestQuote(model, validationResult.request);
+  const payer = c.req.header("x-payer-address") || "anonymous-payer";
+
+  await dbStore.saveRequest({
+    id: requestId,
+    idempotency_key: idempotencyKey,
+    payer_address: payer,
+    pay_to_address: config.payToAddress,
+    network: config.networkCaip2,
+    txid: c.req.header("x-txid") || null,
+    model_slug: model.slug,
+    modality: "voice",
+    quote_amount_usd: quote.finalPriceUsd,
+    quote_microusdc: quote.microUsdc,
+    payment_flow: "authorization",
+    status: "pending",
+    request_hash: requestHash,
+  });
+
   const provider = defaultProviderRegistry.getProvider(model.provider);
   try {
     if (!provider.generateSpeech) {
@@ -344,8 +535,43 @@ export async function handleAudioSpeech(c: Context): Promise<Response> {
       validationResult.request,
       model.slug
     );
-    return c.json(response);
+
+    const responseHash = receiptService.hashData(response);
+    const receipt = receiptService.signReceipt({
+      requestId,
+      txid: c.req.header("x-txid") || `tx-${Date.now()}`,
+      network: config.networkCaip2,
+      payer,
+      payTo: config.payToAddress,
+      amountUsd: quote.formattedPrice,
+      amountMicroUsdc: quote.microUsdc,
+      modelSlug: model.slug,
+      modality: "voice",
+      upstreamProvider: response.upstreamProvider || model.provider,
+      upstreamModel: response.upstreamModel || model.upstreamModelId,
+      requestSha256: requestHash,
+      responseSha256: responseHash,
+    });
+
+    await dbStore.updateRequestStatus(requestId, "completed", {
+      upstream_provider: response.upstreamProvider || model.provider,
+      upstream_model: response.upstreamModel || model.upstreamModelId,
+      upstream_cost_usd: response.upstreamCostUsd,
+      response_hash: responseHash,
+      response_payload: response,
+    });
+
+    c.header("Moltworld-Receipt", JSON.stringify(receipt));
+    return c.json({
+      ...response,
+      moltworld: {
+        receipt,
+      },
+    });
   } catch (err: any) {
+    await dbStore.updateRequestStatus(requestId, "failed", {
+      error_message: err.message,
+    });
     return c.json(
       {
         error: {
@@ -360,7 +586,7 @@ export async function handleAudioSpeech(c: Context): Promise<Response> {
 }
 
 // ----------------------------------------------------
-// Video Generation Handler
+// Video Generation Handler (Upfront Async Job Queue)
 // ----------------------------------------------------
 export async function handleVideoGeneration(c: Context): Promise<Response> {
   const modelSlug = extractModelSlug(c);
@@ -422,6 +648,36 @@ export async function handleVideoGeneration(c: Context): Promise<Response> {
     );
   }
 
+  const requestId = c.req.header("x-request-id") || `vid-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const idempotencyKey = c.req.header("idempotency-key");
+
+  if (idempotencyKey) {
+    const existing = await dbStore.getRequestByIdempotencyKey(idempotencyKey);
+    if (existing && existing.status === "completed" && existing.response_payload) {
+      return c.json(existing.response_payload);
+    }
+  }
+
+  const requestHash = receiptService.hashData(validationResult.request);
+  const quote = calculateRequestQuote(model, validationResult.request);
+  const payer = c.req.header("x-payer-address") || "anonymous-payer";
+
+  await dbStore.saveRequest({
+    id: requestId,
+    idempotency_key: idempotencyKey,
+    payer_address: payer,
+    pay_to_address: config.payToAddress,
+    network: config.networkCaip2,
+    txid: c.req.header("x-txid") || null,
+    model_slug: model.slug,
+    modality: "video",
+    quote_amount_usd: quote.finalPriceUsd,
+    quote_microusdc: quote.microUsdc,
+    payment_flow: "upfront",
+    status: "settled",
+    request_hash: requestHash,
+  });
+
   const provider = defaultProviderRegistry.getProvider(model.provider);
   try {
     if (!provider.generateVideo) {
@@ -432,8 +688,59 @@ export async function handleVideoGeneration(c: Context): Promise<Response> {
       validationResult.request,
       model.slug
     );
-    return c.json(response);
+
+    const jobId = response.id || `job-${Date.now()}`;
+    await dbStore.saveJob({
+      id: jobId,
+      request_id: requestId,
+      payer_address: payer,
+      model_slug: model.slug,
+      status: response.status === "completed" ? "completed" : "processing",
+      video_url: response.video_url || null,
+    });
+
+    const responseHash = receiptService.hashData(response);
+    const receipt = receiptService.signReceipt({
+      requestId,
+      txid: c.req.header("x-txid") || `tx-${Date.now()}`,
+      network: config.networkCaip2,
+      payer,
+      payTo: config.payToAddress,
+      amountUsd: quote.formattedPrice,
+      amountMicroUsdc: quote.microUsdc,
+      modelSlug: model.slug,
+      modality: "video",
+      upstreamProvider: response.upstreamProvider || model.provider,
+      upstreamModel: response.upstreamModel || model.upstreamModelId,
+      requestSha256: requestHash,
+      responseSha256: responseHash,
+    });
+
+    await dbStore.updateRequestStatus(requestId, "completed", {
+      upstream_provider: response.upstreamProvider || model.provider,
+      upstream_model: response.upstreamModel || model.upstreamModelId,
+      upstream_cost_usd: response.upstreamCostUsd,
+      response_hash: responseHash,
+      response_payload: response,
+    });
+
+    c.header("Moltworld-Receipt", JSON.stringify(receipt));
+
+    // Return 202 Accepted with polling job endpoint
+    return c.json(
+      {
+        ...response,
+        poll_endpoint: `/v1/jobs/${jobId}`,
+        moltworld: {
+          receipt,
+        },
+      },
+      response.status === "processing" ? 202 : 200
+    );
   } catch (err: any) {
+    await dbStore.updateRequestStatus(requestId, "failed", {
+      error_message: err.message,
+    });
     return c.json(
       {
         error: {
