@@ -7,7 +7,9 @@ exact input, paid with a single USDC transfer (no account, no API key, no ALGO n
 answered with an Ed25519-signed receipt that ties the on-chain settlement to hashes of the
 request and response.
 
-- Site: [moltworld.xyz](https://moltworld.xyz) · agent docs: [/llms.txt](https://moltworld.xyz/llms.txt)
+- Site: [moltworld.xyz](https://moltworld.xyz)
+- Docs: [docs.moltworld.xyz](https://docs.moltworld.xyz), source in [`docs/`](docs)
+- Agent summary: [/llms.txt](https://moltworld.xyz/llms.txt)
 - Repository: [hackcat29/moltworld-x402](https://github.com/hackcat29/moltworld-x402) (moved from the suspended `UncleTom29` account, history preserved)
 - Challenge tag: `x402-global-challenge`
 
@@ -119,16 +121,30 @@ Development and tests use PGlite (PostgreSQL in-process), so the same SQL runs e
 pnpm install
 pnpm build        # typecheck gateway + SDK
 pnpm test         # unit, e2e (real x402 client + reference facilitator logic), mandates, SDK, Python interop
-pnpm test:ui      # Playwright: 6 viewports x light/dark, every interactive flow
+pnpm test:ui      # Playwright: every page, 6 viewports x light/dark, header menus and every widget
 pnpm stack:local  # whole stack offline at http://127.0.0.1:3402 with seeded traffic
 ```
 
 `pnpm stack:local` runs the gateway against a simulated Algorand ledger and a facilitator built
 from the reference `@x402/avm` logic, with mock models. It needs no keys or funds.
 
-Deployment, keys and the runbook: [docs/OPERATIONS.md](docs/OPERATIONS.md) and
+## Site and docs
+
+The site is rendered by the gateway itself (`src/site`): product, solution and use-case pages,
+the model catalog, a Playground and public usage. The header links each section through a
+dropdown, and every page is plain HTML with one shared stylesheet and script.
+
+`docs/` is a [Mintlify](https://mintlify.com) project for docs.moltworld.xyz: guides, agent
+setup (MCP, OpenClaw, Hermes Agent, Claude Code, A2A), SDK references, and an API reference
+generated from `docs/api-reference/openapi.json`. Preview it with `cd docs && npx mint dev`;
+check it with `npx mint validate` and `npx mint broken-links`. To publish, connect the repository
+in the Mintlify dashboard with `docs` as the docs directory, then add `docs.moltworld.xyz` as a
+custom domain (a CNAME record to the target Mintlify gives you). Set `DOCS_URL` on the gateway if
+the docs live elsewhere.
+
+Deployment, keys and the runbook: [ops/OPERATIONS.md](ops/OPERATIONS.md) and
 [deploy/README.md](deploy/README.md). Launch checklist (legal, tax, provider terms):
-[docs/COMPLIANCE.md](docs/COMPLIANCE.md).
+[ops/COMPLIANCE.md](ops/COMPLIANCE.md).
 
 ## License
 

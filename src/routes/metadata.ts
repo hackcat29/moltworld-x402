@@ -53,6 +53,7 @@ export function handleLlmsTxt(c: Context): Response {
     `> ${SITE_DESCRIPTION}`,
     "",
     `Site: ${origin}/`,
+    `Docs: ${config.docsUrl}`,
     `Logo: ${origin}/logo.png`,
     `Merchant payTo address: ${config.payToAddress}`,
     `Payment: x402 exact scheme; USDC on ${network} (ASA ${config.usdcAsaId}; network ${config.networkCaip2}).`,

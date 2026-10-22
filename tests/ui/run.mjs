@@ -1,4 +1,4 @@
-// UI tests for the Moltworld landing page across desktop, tablet and phone viewports.
+// UI tests for every Moltworld page across desktop, tablet and phone viewports.
 // Boots the offline local stack (mock chain + reference facilitator + seeded traffic),
 // then drives the real page with Playwright.
 //
@@ -68,11 +68,31 @@ async function noHorizontalOverflow(page) {
   });
 }
 
-async function runViewport(browser, vp, scheme) {
-  current = `${vp.name}/${scheme}`;
-  console.log(`▶ ${current}`);
-  const context = await browser.newContext({ ...vp.options, colorScheme: scheme });
-  const page = await context.newPage();
+// Every HTML page reachable from the home page through internal links.
+async function crawlSite() {
+  const skip = /^\/(v1|\.well-known|assets|llms\.txt|health|mcp|a2a)|\.(png|ico|json|txt)$/;
+  const seen = new Set(["/"]);
+  const queue = ["/"];
+  const broken = [];
+  while (queue.length) {
+    const p = queue.shift();
+    const res = await fetch(BASE + p);
+    if (res.status !== 200) {
+      broken.push(`${p} -> ${res.status}`);
+      continue;
+    }
+    const html = await res.text();
+    for (const [, href] of html.matchAll(/href="(\/[^"#?]*)/g)) {
+      if (!skip.test(href) && !seen.has(href)) {
+        seen.add(href);
+        queue.push(href);
+      }
+    }
+  }
+  return { pages: [...seen].sort(), broken };
+}
+
+function watchErrors(page) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   // Browsers log every non-2xx fetch as "Failed to load resource"; statuses are checked below instead.
@@ -87,26 +107,29 @@ async function runViewport(browser, vp, scheme) {
     const pathname = new URL(r.url()).pathname;
     if (!EXPECTED.some(([status, re]) => status === r.status() && re.test(pathname))) errors.push(`HTTP ${r.status()} ${r.url()}`);
   });
+  return errors;
+}
 
-  await page.goto(BASE + "/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => document.getElementById("sPaid")?.textContent !== "-");
+const shot = (page, name, opts = {}) => page.screenshot({ path: path.join(SHOTS, `${current.replace("/", "-")}-${name}.png`), ...opts });
 
-  // Layout
+async function checkPage(page, p, vp, scheme) {
+  await page.goto(BASE + p, { waitUntil: "networkidle" });
   const overflow = await noHorizontalOverflow(page);
-  check("no horizontal page scroll", overflow.scroll <= 0, `scrollWidth exceeds viewport by ${overflow.scroll}px`);
-  check("no element extends past the viewport", overflow.offenders.length === 0, overflow.offenders.join(", "));
-  check("single h1", (await page.locator("h1").count()) === 1);
-  check("html has lang", (await page.getAttribute("html", "lang")) === "en");
+  check(`${p}: no horizontal page scroll`, overflow.scroll <= 0, `scrollWidth exceeds viewport by ${overflow.scroll}px`);
+  check(`${p}: no element extends past the viewport`, overflow.offenders.length === 0, overflow.offenders.join(", "));
+  check(`${p}: single h1`, (await page.locator("h1").count()) === 1);
+  check(`${p}: has a title`, (await page.title()).includes("Moltworld"), await page.title());
+  check(`${p}: html has lang`, (await page.getAttribute("html", "lang")) === "en");
   const unlabeled = await page.evaluate(() =>
     [...document.querySelectorAll("input, select, textarea")]
       .filter((el) => !(el.id && document.querySelector(`label[for="${el.id}"]`)) && !el.getAttribute("aria-label"))
       .map((el) => el.id || el.name)
   );
-  check("every form control has a label", unlabeled.length === 0, unlabeled.join(","));
-  check("images have alt text", (await page.locator("img:not([alt])").count()) === 0);
+  check(`${p}: every form control has a label`, unlabeled.length === 0, unlabeled.join(","));
+  check(`${p}: images have alt text`, (await page.locator("img:not([alt])").count()) === 0);
+  check(`${p}: no in-page links in the header`, (await page.locator('header a[href^="#"]').count()) === 0);
   const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  check(`${scheme} color scheme applied`, scheme === "dark" ? bg === "rgb(7, 9, 14)" : bg === "rgb(246, 247, 251)", bg);
-
+  check(`${p}: ${scheme} color scheme applied`, scheme === "dark" ? bg === "rgb(7, 9, 14)" : bg === "rgb(247, 248, 251)", bg);
   if (vp.mobile) {
     const small = await page.evaluate(() =>
       [...document.querySelectorAll("button, .btn, nav a")]
@@ -114,17 +137,80 @@ async function runViewport(browser, vp, scheme) {
         .filter((el) => el.getBoundingClientRect().height < 36)
         .map((el) => el.textContent.trim().slice(0, 20))
     );
-    check("tap targets at least 36px tall", small.length === 0, small.join(" | "));
+    check(`${p}: tap targets at least 36px tall`, small.length === 0, small.join(" | "));
   }
+}
 
-  await page.screenshot({ path: path.join(SHOTS, `${current.replace("/", "-")}-full.png`), fullPage: true });
+async function runViewport(browser, vp, scheme, pages) {
+  current = `${vp.name}/${scheme}`;
+  console.log(`▶ ${current}`);
+  const context = await browser.newContext({ ...vp.options, colorScheme: scheme });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
 
-  // Header: no in-page section links, live network label
-  check("no in-page nav links in the header", (await page.locator('header a[href^="#"]').count()) === 0);
+  // Every page
+  for (const p of pages) await checkPage(page, p, vp, scheme);
+
+  // Header
+  await page.goto(BASE + "/", { waitUntil: "networkidle" });
   const label = (await page.textContent("#netLabel")).trim();
   check("header shows the network from /health", /^Algorand (Mainnet|Testnet)$/.test(label), label);
+  const triggers = (await page.locator(".nav-trigger").allTextContents()).map((t) => t.trim());
+  check("header menus", triggers.join(",") === "Products,Solutions,Use cases,Docs", triggers.join(","));
+  const collapsed = await page.locator("#menuBtn").isVisible();
+  if (collapsed) {
+    check("mobile: nav hidden until the menu button is used", !(await page.locator("#nav").isVisible()));
+    await page.click("#menuBtn");
+    check("mobile: menu button opens the nav", (await page.getAttribute("#menuBtn", "aria-expanded")) === "true" && (await page.locator("#nav").isVisible()));
+    check("mobile: page behind the menu does not scroll", (await page.evaluate(() => getComputedStyle(document.body).overflow)) === "hidden");
+    check("mobile: Playground in the open menu", await page.locator('.nav-mobile-cta a[href="/playground"]').isVisible());
+    await page.click('.nav-trigger[aria-controls="menu-use-cases"]');
+    check("mobile: section expands", await page.locator("#menu-use-cases").isVisible());
+    await shot(page, "menu-open");
+    await page.click('#menu-use-cases a[href="/use-cases/model-escalation"]');
+    await page.waitForURL(BASE + "/use-cases/model-escalation");
+    check("mobile: menu link navigates", (await page.textContent("h1")).length > 0);
+    check("mobile: menu closed after navigation", !(await page.locator("#nav").isVisible()));
+    await page.click("#menuBtn");
+    await page.click("#menuBtn");
+    check("mobile: menu button closes the nav", !(await page.locator("#nav").isVisible()) && (await page.evaluate(() => getComputedStyle(document.body).overflow)) !== "hidden");
+  } else {
+    const cta = page.locator('.header-actions a[href="/playground"]');
+    check("desktop: Playground button in the header", await cta.isVisible());
+    await page.click('.nav-trigger[aria-controls="menu-products"]');
+    check("desktop: dropdown opens on click", (await page.locator("#menu-products").isVisible()) && (await page.getAttribute('.nav-trigger[aria-controls="menu-products"]', "aria-expanded")) === "true");
+    const menuBox = await page.locator("#menu-products").boundingBox();
+    const vw = page.viewportSize().width;
+    check("desktop: dropdown fits the viewport", menuBox && menuBox.x >= 0 && menuBox.x + menuBox.width <= vw, JSON.stringify(menuBox));
+    await shot(page, "dropdown");
+    await page.keyboard.press("Escape");
+    check("desktop: Escape closes the dropdown", !(await page.locator("#menu-products").isVisible()));
+    await page.click('.nav-trigger[aria-controls="menu-solutions"]');
+    await page.mouse.click(5, page.viewportSize().height - 5);
+    check("desktop: outside click closes the dropdown", !(await page.locator("#menu-solutions").isVisible()));
+    await page.click('.nav-trigger[aria-controls="menu-products"]');
+    await page.click('#menu-products a[href="/products/mandates"]');
+    await page.waitForURL(BASE + "/products/mandates");
+    check("desktop: dropdown link navigates", true);
+    check("desktop: current section marked", (await page.locator(".nav-item.active .nav-trigger").textContent()).trim() === "Products");
+    const docsLinks = await page.locator("#menu-docs a").evaluateAll((els) => els.map((a) => a.href));
+    check("desktop: docs menu points at the docs site", docsLinks.length > 0 && docsLinks.every((h) => h.startsWith("https://docs.moltworld.xyz")), docsLinks.join(","));
+    await page.click('.header-actions a[href="/playground"]');
+    await page.waitForURL(BASE + "/playground");
+    check("desktop: Playground button navigates", true);
+  }
 
-  // Quote calculator: chat
+  // Home: code tabs with keyboard
+  await page.goto(BASE + "/", { waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.getElementById("sPaid")?.textContent !== "-");
+  await shot(page, "home-full", { fullPage: true });
+  await page.locator("#t-hero-ts").focus();
+  await page.keyboard.press("ArrowRight");
+  check("arrow key switches code tab", (await page.getAttribute("#t-hero-py", "aria-selected")) === "true" && (await page.locator("#p-hero-py").isVisible()));
+  check("previous panel hidden", !(await page.locator("#p-hero-ts").isVisible()));
+
+  // Playground: quote, 402 challenge, snippets
+  await page.goto(BASE + "/playground", { waitUntil: "networkidle" });
   await page.selectOption("#qModel", "gpt-4o");
   await page.fill("#qMessage", "Explain atomic transfers on Algorand.");
   await page.fill("#qMaxTokens", "500");
@@ -140,6 +226,8 @@ async function runViewport(browser, vp, scheme) {
     return (await r.json()).quote.formattedPrice;
   });
   check("chat quote matches /v1/quote", shown === expected, `${shown} vs ${expected}`);
+  check("curl snippet follows the form", (await page.textContent("#snipCurl")).includes("/v1/models/gpt-4o/chat/completions"));
+  check("snippet carries the body", (await page.textContent("#snipCurl")).includes("Explain atomic transfers on Algorand."));
 
   await page.click("#challengeBtn");
   await page.waitForFunction(() => document.querySelector("#quoteOut .note")?.textContent.includes("402"));
@@ -147,7 +235,6 @@ async function runViewport(browser, vp, scheme) {
   check("402 challenge amount equals the quote", challengePrice === expected, `${challengePrice} vs ${expected}`);
   check("402 challenge shows payTo", (await page.textContent("#quoteOut")).includes("Pay to"));
 
-  // Quote calculator: video fields follow the model's spec
   await page.selectOption("#qModel", "veo-3.1-fast");
   check("video fields shown for video model", await page.locator('[data-for="video"]').isVisible());
   check("chat fields hidden for video model", !(await page.locator('[data-for="chat"]').isVisible()));
@@ -156,8 +243,8 @@ async function runViewport(browser, vp, scheme) {
   await page.click("#quoteBtn");
   await page.waitForFunction(() => document.querySelector("#quoteOut")?.textContent.includes("seconds"));
   check("video quote shows seconds", true);
+  check("snippet follows the video model", (await page.textContent("#snipCurl")).includes("/videos/generations"));
 
-  // Validation errors are shown, not swallowed
   await page.selectOption("#qModel", "gpt");
   await page.fill("#qMaxTokens", "999999");
   await page.click("#quoteBtn");
@@ -165,27 +252,7 @@ async function runViewport(browser, vp, scheme) {
   check("invalid input shows an error", (await page.textContent("#quoteOut .err")).includes("max_tokens"));
   await page.fill("#qMaxTokens", "300");
 
-  // Catalog
-  await page.click('[data-filter="video"]');
-  const videoCards = page.locator("#modelList .model:not(.hidden)");
-  const videoCount = await videoCards.count();
-  const modalities = await videoCards.evaluateAll((els) => els.map((e) => e.dataset.modality));
-  check("video filter shows only video models", videoCount === 5 && modalities.every((m) => m === "video"), `${videoCount} ${modalities}`);
-  await page.click('[data-filter="all"]');
-  check("catalog paginates", (await page.locator("#modelList .model:not(.hidden)").count()) === 9);
-  await page.click("#moreBtn");
-  check("show more reveals more models", (await page.locator("#modelList .model:not(.hidden)").count()) > 9);
-  await page.fill("#search", "claude");
-  const names = await page.locator("#modelList .model:not(.hidden) h3").allTextContents();
-  check("search filters by name", names.length > 0 && names.every((n) => n.toLowerCase().includes("claude")), names.join(","));
-  await page.fill("#search", "zzz-no-such-model");
-  check("empty search shows a message", await page.locator("#noModels").isVisible());
-  await page.fill("#search", "flux");
-  await page.locator('#modelList .model:not(.hidden) [data-quote="flux-2-pro"]').click();
-  await page.waitForFunction(() => document.getElementById("qModel").value === "flux-2-pro" && document.querySelector("#quoteOut .big-price"));
-  check("'Get exact quote' prefills and quotes", (await page.inputValue("#qModel")) === "flux-2-pro");
-
-  // Receipts: look one up by id, verified in the browser with WebCrypto Ed25519
+  // Playground: receipts verified in the browser with WebCrypto Ed25519
   const requestId = await page.evaluate(async () => (await (await fetch("/v1/stats")).json()).recent_settlements[0].request_id);
   await page.fill("#receiptInput", requestId);
   await page.click('#receiptForm button[type="submit"]');
@@ -200,8 +267,31 @@ async function runViewport(browser, vp, scheme) {
   await page.click('#receiptForm button[type="submit"]');
   await page.waitForFunction(() => document.querySelector("#receiptOut .badge")?.textContent.trim() === "Invalid");
   check("tampered receipt is rejected", true);
+  await shot(page, "playground", { fullPage: true });
+
+  // Models: catalog filters, paging, search, link to the playground
+  await page.goto(BASE + "/models", { waitUntil: "networkidle" });
+  await page.click('[data-filter="video"]');
+  const videoCards = page.locator("#modelList .model:not(.hidden)");
+  const videoCount = await videoCards.count();
+  const modalities = await videoCards.evaluateAll((els) => els.map((e) => e.dataset.modality));
+  check("video filter shows only video models", videoCount === 5 && modalities.every((m) => m === "video"), `${videoCount} ${modalities}`);
+  await page.click('[data-filter="all"]');
+  check("catalog paginates", (await page.locator("#modelList .model:not(.hidden)").count()) === 12);
+  await page.click("#moreBtn");
+  check("show more reveals more models", (await page.locator("#modelList .model:not(.hidden)").count()) > 12);
+  await page.fill("#search", "claude");
+  const names = await page.locator("#modelList .model:not(.hidden) h3").allTextContents();
+  check("search filters by name", names.length > 0 && names.every((n) => n.toLowerCase().includes("claude")), names.join(","));
+  await page.fill("#search", "zzz-no-such-model");
+  check("empty search shows a message", await page.locator("#noModels").isVisible());
+  await page.fill("#search", "flux");
+  await page.locator('#modelList .model:not(.hidden) a[href="/playground?model=flux-2-pro"]').click();
+  await page.waitForURL(BASE + "/playground?model=flux-2-pro");
+  check("'Try in Playground' preselects the model", (await page.inputValue("#qModel")) === "flux-2-pro");
 
   // Mandate lookup
+  await page.goto(BASE + "/products/mandates", { waitUntil: "networkidle" });
   await page.fill("#mandateQuery", "not-an-address");
   await page.click('#mandateForm button[type="submit"]');
   await page.waitForSelector("#mandateOut .err");
@@ -212,6 +302,7 @@ async function runViewport(browser, vp, scheme) {
   check("mandate lookup handles unknown ids", true);
 
   // Marketplace
+  await page.goto(BASE + "/products/marketplace", { waitUntil: "networkidle" });
   await page.waitForFunction(() => document.getElementById("marketOut").textContent.includes("Weather Now"));
   check("live marketplace listings render", true);
   await page.fill("#earnAddr", "TQWEL54TCBYH3QJLN2OU2QH7XZTHRDZMF2YQIU5B7W2HK6GS7I2TWHDMXU");
@@ -219,25 +310,25 @@ async function runViewport(browser, vp, scheme) {
   await page.waitForFunction(() => document.getElementById("earnOut").textContent.includes("Unpaid"));
   check("creator earnings lookup works", true);
 
-  // Stats
+  // Usage
+  await page.goto(BASE + "/stats", { waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.getElementById("sPaid")?.textContent !== "-");
   const rows = await page.locator("#recentRows tr").count();
   check("recent settlements listed", rows >= 5, `${rows} rows`);
   const href = await page.locator("#recentRows a").first().getAttribute("href");
   check("settlements link to the explorer", href?.startsWith("https://lora.algokit.io/testnet/transaction/"), href);
 
-  // Code tabs with keyboard
-  await page.locator("#t-ts").focus();
-  await page.keyboard.press("ArrowRight");
-  check("arrow key switches code tab", (await page.getAttribute("#t-py", "aria-selected")) === "true" && (await page.locator("#p-py").isVisible()));
-  check("previous panel hidden", !(await page.locator("#p-ts").isVisible()));
+  // Pages with config tabs
+  await page.goto(BASE + "/solutions/agents", { waitUntil: "networkidle" });
+  await page.click("#t-agents-openclaw");
+  check("agent config tabs switch", await page.locator("#p-agents-openclaw").isVisible());
+  await shot(page, "solutions-agents", { fullPage: true });
+  await page.goto(BASE + "/use-cases/agent-allowance", { waitUntil: "networkidle" });
+  await shot(page, "use-case", { fullPage: true });
 
   const after = await noHorizontalOverflow(page);
   check("no horizontal scroll after interactions", after.scroll <= 0 && after.offenders.length === 0, `${after.scroll} ${after.offenders}`);
   check("no console errors or failed requests", errors.length === 0, errors.join(" | "));
-
-  await page.locator("#quote").screenshot({ path: path.join(SHOTS, `${current.replace("/", "-")}-quote.png`) });
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-  await page.screenshot({ path: path.join(SHOTS, `${current.replace("/", "-")}-top.png`) });
   await context.close();
 }
 
@@ -245,10 +336,15 @@ fs.mkdirSync(SHOTS, { recursive: true });
 const stack = await startStack();
 const browser = await chromium.launch();
 try {
+  current = "site";
+  const { pages, broken } = await crawlSite();
+  console.log(`${pages.length} pages: ${pages.join(" ")}`);
+  check("internal links all resolve", broken.length === 0, broken.join(", "));
+  check("every section has pages", ["/products", "/solutions", "/use-cases", "/playground", "/models", "/stats"].every((p) => pages.includes(p)), pages.join(","));
   for (const vp of VIEWPORTS) {
     for (const scheme of ["light", "dark"]) {
       try {
-        await runViewport(browser, vp, scheme);
+        await runViewport(browser, vp, scheme, pages);
       } catch (err) {
         check("viewport run completed", false, err.message.split("\n")[0]);
       }
