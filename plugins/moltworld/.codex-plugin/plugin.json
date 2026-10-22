@@ -1,7 +1,7 @@
 {
   "name": "moltworld",
-  "version": "0.1.0",
-  "description": "Browse Moltworld AI models and Algorand x402 payment terms through a live MCP server.",
+  "version": "1.0.0",
+  "description": "Moltworld pay-per-request AI on Algorand through a live MCP server.",
   "author": {
     "name": "Moltworld",
     "url": "https://moltworld.xyz"
@@ -11,7 +11,7 @@
   "interface": {
     "displayName": "Moltworld",
     "shortDescription": "Find AI models and x402 payment terms.",
-    "longDescription": "Search Moltworld's live multimodal AI catalog, inspect Algorand USDC x402 payment requirements, and submit caller-signed model requests.",
+    "longDescription": "Search Moltworld's multimodal AI catalog, get exact Algorand USDC quotes and x402 payment challenges, submit caller-signed requests, and check signed receipts, rebates and refunds.",
     "developerName": "Moltworld",
     "category": "Productivity",
     "capabilities": [],
