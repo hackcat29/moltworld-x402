@@ -26,9 +26,20 @@ if command -v docker >/dev/null 2>&1; then
 fi
 
 log "Installing system packages (native PostgreSQL)"
+export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y curl git ufw nginx jq openssl ca-certificates postgresql postgresql-contrib
 systemctl enable --now postgresql
+
+run_pg() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u postgres -- psql "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -u postgres psql "$@"
+  else
+    su -s /bin/bash postgres -c "psql $(printf '%q ' "$@")"
+  fi
+}
 
 log "Installing Node.js 22 and pnpm"
 if ! command -v node >/dev/null || [ "$(node -v | cut -d. -f1 | tr -d v)" -lt 22 ]; then
@@ -75,13 +86,25 @@ ensure_secret DATABASE_URL "postgres://moltworld:$(get_env POSTGRES_PASSWORD)@12
 
 log "Configuring native PostgreSQL database and user"
 systemctl enable --now postgresql
+for i in $(seq 1 15); do
+  if run_pg -c "SELECT 1" >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+
 PG_PASSWORD="$(get_env POSTGRES_PASSWORD)"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'moltworld'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE USER moltworld WITH PASSWORD '$PG_PASSWORD';"
-sudo -u postgres psql -c "ALTER USER moltworld WITH PASSWORD '$PG_PASSWORD';"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'moltworld'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE DATABASE moltworld OWNER moltworld;"
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE moltworld TO moltworld;"
+run_pg -c "DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'moltworld') THEN
+    CREATE ROLE moltworld WITH LOGIN PASSWORD '$PG_PASSWORD';
+  ELSE
+    ALTER ROLE moltworld WITH PASSWORD '$PG_PASSWORD';
+  END IF;
+END
+\$\$;"
+
+run_pg -tc "SELECT 1 FROM pg_database WHERE datname = 'moltworld'" | grep -q 1 || \
+  run_pg -c "CREATE DATABASE moltworld OWNER moltworld;"
+run_pg -c "GRANT ALL PRIVILEGES ON DATABASE moltworld TO moltworld;"
 
 log "Building"
 pnpm install --frozen-lockfile
@@ -110,9 +133,21 @@ for key in AVM_ADDRESS OPENROUTER_API_KEY; do [ -n "$(get_env $key)" ] || missin
 if [ "$(get_env ALGORAND_NETWORK)" = "mainnet" ] && [ ${#missing[@]} -gt 0 ]; then
   warn "Set ${missing[*]} in $ENV_FILE, then: systemctl restart moltworld"
 else
+  log "Restarting Moltworld gateway"
   systemctl restart moltworld
-  sleep 3
-  curl -fsS http://127.0.0.1:3402/health | jq '{status, ready, network, ledger, enabled_models, receipts}' || journalctl -u moltworld -n 40 --no-pager
+  log "Waiting for gateway to report healthy..."
+  for i in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:3402/health 2>/dev/null | grep -q '"ready":true'; then
+      echo "Gateway healthy and serving requests on port 3402!"
+      curl -fsS http://127.0.0.1:3402/health | jq '{status, ready, network, ledger, enabled_models, receipts}' || true
+      exit 0
+    fi
+    sleep 2
+  done
+  warn "Gateway did not become healthy:"
+  curl -s http://127.0.0.1:3402/health || true
+  journalctl -u moltworld -n 60 --no-pager
+  exit 1
 fi
 
 cat <<EOF
