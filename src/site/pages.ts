@@ -749,9 +749,8 @@ function usage(c: Context) {
         <dt>Returning wallets</dt><dd id="sRepeat">-</dd>
       </dl>
       <div style="margin-top:20px">
-        <a href="https://facilitator.goplausible.xyz/dashboard/merchants/414f1538ce0d6de4" target="_blank" rel="noopener" class="btn btn-ghost" style="display:inline-flex;align-items:center;gap:6px">
-          <span>View on Facilitator Dashboard</span>
-          <span>↗</span>
+        <a href="https://facilitator.goplausible.xyz/dashboard/merchants/414f1538ce0d6de4" target="_blank" rel="noopener" class="btn btn-ghost btn-small" style="max-width:100%;white-space:normal;text-align:center">
+          Facilitator dashboard ↗
         </a>
       </div>
     </section>
