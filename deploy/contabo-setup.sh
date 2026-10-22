@@ -115,18 +115,35 @@ cp deploy/moltworld.service /etc/systemd/system/moltworld.service
 systemctl daemon-reload
 systemctl enable moltworld
 
-log "Nginx"
-mkdir -p /etc/ssl/certs /etc/ssl/private
-if [ ! -f /etc/ssl/certs/moltworld.pem ]; then
-  warn "No origin certificate found; creating a temporary self-signed one."
-  warn "Replace it with a Cloudflare Origin CA certificate (SSL/TLS > Origin Server) for Full (Strict)."
-  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/ssl/private/moltworld.key -out /etc/ssl/certs/moltworld.pem -subj "/CN=moltworld.xyz"
-fi
+log "Nginx and SSL"
+mkdir -p /var/www/html /etc/nginx/ssl
 cp deploy/nginx-moltworld.conf /etc/nginx/sites-available/moltworld
 ln -sf /etc/nginx/sites-available/moltworld /etc/nginx/sites-enabled/moltworld
 rm -f /etc/nginx/sites-enabled/default
+
+# Generate self-signed certificate if no certificate exists yet
+if [ ! -f /etc/nginx/ssl/moltworld.crt ]; then
+  warn "Generating temporary certificate in /etc/nginx/ssl/."
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/moltworld.key -out /etc/nginx/ssl/moltworld.crt -subj "/CN=moltworld.xyz"
+fi
 nginx -t && systemctl reload nginx
+
+# Attempt to obtain a real Let's Encrypt certificate via Certbot (HTTP-01 challenge over port 80)
+if ! openssl x509 -in /etc/nginx/ssl/moltworld.crt -noout -issuer 2>/dev/null | grep -qi "Let's Encrypt\|Cloudflare"; then
+  log "Attempting to issue trusted Let's Encrypt certificate via Certbot..."
+  apt-get install -y certbot || true
+  if certbot certonly --webroot -w /var/www/html -d moltworld.xyz -d www.moltworld.xyz --non-interactive --agree-tos --register-unsafely-without-email 2>/dev/null; then
+    ln -sf /etc/letsencrypt/live/moltworld.xyz/fullchain.pem /etc/nginx/ssl/moltworld.crt
+    ln -sf /etc/letsencrypt/live/moltworld.xyz/privkey.pem /etc/nginx/ssl/moltworld.key
+    log "Installed trusted Let's Encrypt SSL certificate."
+    nginx -t && systemctl reload nginx
+  else
+    warn "Certbot automated issuance not available; keeping existing certificate."
+    warn "Note: If Cloudflare reports Error 526, either set Cloudflare SSL/TLS to 'Full' (instead of 'Strict')"
+    warn "or install a Cloudflare Origin CA certificate into /etc/nginx/ssl/moltworld.crt."
+  fi
+fi
 
 missing=()
 for key in AVM_ADDRESS OPENROUTER_API_KEY; do [ -n "$(get_env $key)" ] || missing+=("$key"); done
