@@ -20,3 +20,5 @@ scripts/processFundedWallets.ts
 scripts/transferMerchantUsdc.ts
 scripts/swapAndWithdrawMerchantAlgo.ts
 scripts/withdrawMerchantUsdc.ts
+scripts/checkFleetBalances.ts
+*fleet_addresses*

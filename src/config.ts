@@ -36,6 +36,14 @@ export interface GatewayConfig {
   anthropicApiKey?: string;
   googleAiApiKey?: string;
   deepseekApiKey?: string;
+  falKey?: string;
+  elevenlabsApiKey?: string;
+  databaseUrl?: string;
+  redisUrl?: string;
+  receiptSigningKey?: string;
+  refundMnemonic?: string;
+  priceMargin: number;
+  priceMinFloor: number;
   mockProviders: boolean;
   rateLimitMaxRequests: number;
   rateLimitWindowMs: number;
@@ -75,6 +83,14 @@ export const config: GatewayConfig = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.trim(),
   googleAiApiKey: process.env.GOOGLE_AI_API_KEY?.trim(),
   deepseekApiKey: process.env.DEEPSEEK_API_KEY?.trim(),
+  falKey: process.env.FAL_KEY?.trim(),
+  elevenlabsApiKey: process.env.ELEVENLABS_API_KEY?.trim(),
+  databaseUrl: process.env.DATABASE_URL?.trim(),
+  redisUrl: process.env.REDIS_URL?.trim(),
+  receiptSigningKey: process.env.RECEIPT_SIGNING_KEY?.trim(),
+  refundMnemonic: process.env.REFUND_WALLET_MNEMONIC?.trim(),
+  priceMargin: parseFloat(process.env.PRICE_MARGIN || "0.30"),
+  priceMinFloor: parseFloat(process.env.PRICE_MIN_FLOOR || "0.001"),
   mockProviders: process.env.MOCK_PROVIDERS === "true" || process.env.NODE_ENV === "test",
   rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX || "60", 10),
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10), // 1 minute

@@ -3,11 +3,15 @@ import { AIProvider } from "./types.js";
 import { OpenRouterProvider } from "./openrouter.js";
 import { MockProvider } from "./mock.js";
 import { DirectOpenAIProvider } from "./direct.js";
+import { FalProvider } from "./fal.js";
+import { ElevenLabsProvider } from "./elevenlabs.js";
 
 export * from "./types.js";
 export * from "./openrouter.js";
 export * from "./mock.js";
 export * from "./direct.js";
+export * from "./fal.js";
+export * from "./elevenlabs.js";
 
 export class ProviderRegistry {
   private providers: Map<string, AIProvider> = new Map();
@@ -24,6 +28,18 @@ export class ProviderRegistry {
     if (config.openaiApiKey) {
       this.registerProvider(
         new DirectOpenAIProvider(config.openaiApiKey, config.upstreamTimeoutMs)
+      );
+    }
+
+    if (config.falKey) {
+      this.registerProvider(
+        new FalProvider(config.falKey, config.upstreamTimeoutMs * 2)
+      );
+    }
+
+    if (config.elevenlabsApiKey) {
+      this.registerProvider(
+        new ElevenLabsProvider(config.elevenlabsApiKey, config.upstreamTimeoutMs)
       );
     }
   }
@@ -51,6 +67,10 @@ export class ProviderRegistry {
   hasProvider(providerId: string): boolean {
     if (config.mockProviders) return true;
     return this.providers.has(providerId.toLowerCase());
+  }
+
+  listConfiguredProviders(): string[] {
+    return Array.from(this.providers.keys());
   }
 }
 

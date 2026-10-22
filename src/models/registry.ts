@@ -8,13 +8,20 @@ export interface ModelLimits {
   maxDurationSeconds?: number;
 }
 
+export interface ModelPricingRates {
+  inputPerMillionUsd?: number;
+  outputPerMillionUsd?: number;
+  unitRateUsd?: number; // per image, per 1k characters, or per video second
+}
+
 export interface ModelDefinition {
   slug: string;
   displayName: string;
   modality: ModelModality;
-  provider: string; // e.g. "openrouter", "openai", "anthropic", "google", "deepseek", "elevenlabs", "fal"
+  provider: string; // e.g. "openrouter", "openai", "fal", "elevenlabs"
   upstreamModelId: string;
-  price: string; // Fixed USD price formatted e.g. "$0.03"
+  price: string; // Base / minimum price e.g. "$0.003"
+  rates?: ModelPricingRates;
   limits: ModelLimits;
   enabled: boolean;
   description: string;
@@ -49,7 +56,7 @@ export function getModelDiscoveryDescription(model: ModelDefinition): string {
 
 export const INITIAL_MODELS: ModelDefinition[] = [
   // ----------------------------------------------------
-  // Chat Models
+  // Chat Models (OpenRouter Verified Active Upstreams)
   // ----------------------------------------------------
   {
     slug: "gpt",
@@ -58,6 +65,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: process.env.GPT_PROVIDER || "openrouter",
     upstreamModelId: process.env.GPT_UPSTREAM_MODEL || "openai/gpt-4o-mini",
     price: process.env.PRICE_GPT || "$0.003",
+    rates: { inputPerMillionUsd: 0.15, outputPerMillionUsd: 0.60 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 2048,
@@ -75,6 +83,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: process.env.GPT4O_PROVIDER || "openrouter",
     upstreamModelId: process.env.GPT4O_UPSTREAM_MODEL || "openai/gpt-4o",
     price: process.env.PRICE_GPT4O || "$0.005",
+    rates: { inputPerMillionUsd: 2.50, outputPerMillionUsd: 10.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 1024,
@@ -86,29 +95,13 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     tags: ["chat", "gpt-4o", "openai", "flagship", "x402-global-challenge"],
   },
   {
-    slug: "claude",
-    displayName: "Claude 3 Haiku",
-    modality: "chat",
-    provider: process.env.CLAUDE_PROVIDER || "openrouter",
-    upstreamModelId: process.env.CLAUDE_UPSTREAM_MODEL || "anthropic/claude-3-haiku",
-    price: process.env.PRICE_CLAUDE || "$0.003",
-    limits: {
-      maxInputTokens: 4096,
-      maxOutputTokens: 2048,
-      maxMessages: 50,
-      maxPromptChars: 32000,
-    },
-    enabled: true,
-    description: "Claude inference through Moltworld: send chat messages and receive a normalized AI response.",
-    tags: ["chat", "claude", "anthropic", "x402-global-challenge"],
-  },
-  {
     slug: "claude-sonnet",
     displayName: "Claude Sonnet 4.5",
     modality: "chat",
     provider: process.env.CLAUDE_SONNET_PROVIDER || "openrouter",
     upstreamModelId: process.env.CLAUDE_SONNET_UPSTREAM_MODEL || "anthropic/claude-sonnet-4.5",
     price: process.env.PRICE_CLAUDE_SONNET || "$0.006",
+    rates: { inputPerMillionUsd: 3.00, outputPerMillionUsd: 15.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 1024,
@@ -126,6 +119,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: process.env.GEMINI_PROVIDER || "openrouter",
     upstreamModelId: process.env.GEMINI_UPSTREAM_MODEL || "google/gemini-2.5-flash",
     price: process.env.PRICE_GEMINI || "$0.002",
+    rates: { inputPerMillionUsd: 0.30, outputPerMillionUsd: 2.50 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 2048,
@@ -143,6 +137,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "google/gemini-2.5-flash-lite",
     price: process.env.PRICE_GEMINI_LITE || "$0.001",
+    rates: { inputPerMillionUsd: 0.10, outputPerMillionUsd: 0.40 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 2048,
@@ -160,6 +155,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: process.env.GEMINI_PRO_PROVIDER || "openrouter",
     upstreamModelId: process.env.GEMINI_PRO_UPSTREAM_MODEL || "google/gemini-2.5-pro",
     price: process.env.PRICE_GEMINI_PRO || "$0.004",
+    rates: { inputPerMillionUsd: 1.25, outputPerMillionUsd: 10.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 1024,
@@ -177,6 +173,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: process.env.DEEPSEEK_PROVIDER || "openrouter",
     upstreamModelId: process.env.DEEPSEEK_UPSTREAM_MODEL || "deepseek/deepseek-chat",
     price: process.env.PRICE_DEEPSEEK || "$0.001",
+    rates: { inputPerMillionUsd: 0.26, outputPerMillionUsd: 1.03 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 2048,
@@ -188,29 +185,13 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     tags: ["chat", "deepseek", "x402-global-challenge"],
   },
   {
-    slug: "deepseek-r1",
-    displayName: "DeepSeek R1",
-    modality: "chat",
-    provider: process.env.DEEPSEEK_R1_PROVIDER || "openrouter",
-    upstreamModelId: process.env.DEEPSEEK_R1_UPSTREAM_MODEL || "deepseek/deepseek-r1",
-    price: process.env.PRICE_DEEPSEEK_R1 || "$0.002",
-    limits: {
-      maxInputTokens: 4096,
-      maxOutputTokens: 2048,
-      maxMessages: 50,
-      maxPromptChars: 32000,
-    },
-    enabled: true,
-    description: "DeepSeek R1 reasoning through Moltworld: transparent chain-of-thought verification.",
-    tags: ["chat", "deepseek", "reasoning", "r1", "x402-global-challenge"],
-  },
-  {
     slug: "llama",
     displayName: "Llama 3.3 70B",
     modality: "chat",
     provider: process.env.LLAMA_PROVIDER || "openrouter",
     upstreamModelId: process.env.LLAMA_UPSTREAM_MODEL || "meta-llama/llama-3.3-70b-instruct",
     price: process.env.PRICE_LLAMA || "$0.001",
+    rates: { inputPerMillionUsd: 0.10, outputPerMillionUsd: 0.32 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 2048,
@@ -228,6 +209,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-6-astra",
     price: process.env.PRICE_GPT_6_ASTRA || "$0.80",
+    rates: { inputPerMillionUsd: 10.00, outputPerMillionUsd: 50.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -245,6 +227,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-6-sol",
     price: process.env.PRICE_GPT_6_SOL || "$0.70",
+    rates: { inputPerMillionUsd: 2.00, outputPerMillionUsd: 10.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -262,6 +245,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-5.4-pro",
     price: process.env.PRICE_GPT_5_4_PRO || "$0.60",
+    rates: { inputPerMillionUsd: 30.00, outputPerMillionUsd: 180.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -279,6 +263,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-5.2-pro",
     price: process.env.PRICE_GPT_5_2_PRO || "$0.50",
+    rates: { inputPerMillionUsd: 21.00, outputPerMillionUsd: 168.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -296,6 +281,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-5-pro",
     price: process.env.PRICE_GPT_5_PRO || "$0.35",
+    rates: { inputPerMillionUsd: 15.00, outputPerMillionUsd: 120.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -313,6 +299,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/o3-pro",
     price: process.env.PRICE_O3_PRO || "$0.25",
+    rates: { inputPerMillionUsd: 20.00, outputPerMillionUsd: 80.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -330,6 +317,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "anthropic/claude-fable-5.1",
     price: process.env.PRICE_CLAUDE_FABLE_5_1 || "$0.15",
+    rates: { inputPerMillionUsd: 10.00, outputPerMillionUsd: 50.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -347,6 +335,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "anthropic/claude-opus-5",
     price: process.env.PRICE_CLAUDE_OPUS_5 || "$0.055",
+    rates: { inputPerMillionUsd: 5.00, outputPerMillionUsd: 25.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -364,6 +353,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "anthropic/claude-opus-5.5",
     price: process.env.PRICE_CLAUDE_OPUS_5_5 || "$0.060",
+    rates: { inputPerMillionUsd: 4.00, outputPerMillionUsd: 20.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -375,29 +365,13 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     tags: ["chat", "claude", "anthropic", "opus", "x402-global-challenge"],
   },
   {
-    slug: "gpt-5.6-astra",
-    displayName: "GPT-5.6 Astra",
-    modality: "chat",
-    provider: "openrouter",
-    upstreamModelId: "openai/gpt-5.6-astra",
-    price: process.env.PRICE_GPT_5_6_ASTRA || "$0.050",
-    limits: {
-      maxInputTokens: 4096,
-      maxOutputTokens: 4096,
-      maxMessages: 50,
-      maxPromptChars: 32000,
-    },
-    enabled: true,
-    description: "GPT-5.6 Astra stellar-class multi-step reasoning and knowledge synthesis through Moltworld.",
-    tags: ["chat", "gpt", "openai", "astra", "x402-global-challenge"],
-  },
-  {
     slug: "gpt-5.4",
     displayName: "GPT-5.4",
     modality: "chat",
     provider: "openrouter",
     upstreamModelId: "openai/gpt-5.4",
     price: process.env.PRICE_GPT_5_4 || "$0.022",
+    rates: { inputPerMillionUsd: 2.50, outputPerMillionUsd: 15.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -415,6 +389,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-5.2",
     price: process.env.PRICE_GPT_5_2 || "$0.020",
+    rates: { inputPerMillionUsd: 1.75, outputPerMillionUsd: 14.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -432,6 +407,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-5.6-sol",
     price: process.env.PRICE_GPT_5_6_SOL || "$0.040",
+    rates: { inputPerMillionUsd: 4.00, outputPerMillionUsd: 20.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -449,6 +425,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "google/gemini-3.1-pro-preview",
     price: process.env.PRICE_GEMINI_3_1_PRO || "$0.035",
+    rates: { inputPerMillionUsd: 2.00, outputPerMillionUsd: 12.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -466,6 +443,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-5.6-terra",
     price: process.env.PRICE_GPT_5_6_TERRA || "$0.035",
+    rates: { inputPerMillionUsd: 2.00, outputPerMillionUsd: 12.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -483,6 +461,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "anthropic/claude-sonnet-5",
     price: process.env.PRICE_CLAUDE_SONNET_5 || "$0.030",
+    rates: { inputPerMillionUsd: 2.00, outputPerMillionUsd: 10.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -500,6 +479,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "anthropic/claude-sonnet-5.5",
     price: process.env.PRICE_CLAUDE_SONNET_5_5 || "$0.040",
+    rates: { inputPerMillionUsd: 2.00, outputPerMillionUsd: 10.00 },
     limits: {
       maxInputTokens: 4096,
       maxOutputTokens: 4096,
@@ -510,34 +490,18 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     description: "Claude Sonnet 5.5 refined frontier reasoning, refactoring, and code generation through Moltworld.",
     tags: ["chat", "claude", "anthropic", "sonnet", "x402-global-challenge"],
   },
-  {
-    slug: "gpt-5.6-luno",
-    displayName: "GPT-5.6 Luno",
-    modality: "chat",
-    provider: "openrouter",
-    upstreamModelId: "openai/gpt-5.6-luno",
-    price: process.env.PRICE_GPT_5_6_LUNO || "$0.025",
-    limits: {
-      maxInputTokens: 4096,
-      maxOutputTokens: 4096,
-      maxMessages: 50,
-      maxPromptChars: 32000,
-    },
-    enabled: true,
-    description: "GPT-5.6 Luno lunar-class low-latency lightweight inference through Moltworld.",
-    tags: ["chat", "gpt", "openai", "luno", "lite", "x402-global-challenge"],
-  },
 
   // ----------------------------------------------------
-  // Image Generation Models (Over 500% Markup)
+  // Image Generation Models (fal.ai Upstream)
   // ----------------------------------------------------
   {
     slug: "recraft-v4.1-flash",
     displayName: "Recraft V4.1 Flash",
     modality: "image",
-    provider: "openrouter",
-    upstreamModelId: "recraft/recraft-v4.1-flash",
+    provider: "fal",
+    upstreamModelId: "fal-ai/recraft-v3",
     price: process.env.PRICE_RECRAFT_FLASH || "$0.05",
+    rates: { unitRateUsd: 0.04 },
     limits: {
       maxPromptChars: 3000,
     },
@@ -549,9 +513,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "flux-2-pro",
     displayName: "FLUX.2 Pro",
     modality: "image",
-    provider: "openrouter",
-    upstreamModelId: "black-forest-labs/flux.2-pro",
+    provider: "fal",
+    upstreamModelId: "fal-ai/flux-pro/v1.1",
     price: process.env.PRICE_FLUX_PRO || "$0.20",
+    rates: { unitRateUsd: 0.05 },
     limits: {
       maxPromptChars: 4000,
     },
@@ -563,9 +528,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "qwen-image-3",
     displayName: "Qwen Image 3",
     modality: "image",
-    provider: "openrouter",
-    upstreamModelId: "qwen/qwen-image-3",
+    provider: "fal",
+    upstreamModelId: "fal-ai/qwen-image",
     price: process.env.PRICE_QWEN_IMAGE || "$0.20",
+    rates: { unitRateUsd: 0.04 },
     limits: {
       maxPromptChars: 3000,
     },
@@ -577,9 +543,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "seedream-5.0",
     displayName: "ByteDance Seedream 5.0",
     modality: "image",
-    provider: "openrouter",
-    upstreamModelId: "bytedance-seed/seedream-5-0-lite",
+    provider: "fal",
+    upstreamModelId: "fal-ai/bytedance/seedream",
     price: process.env.PRICE_SEEDREAM || "$0.25",
+    rates: { unitRateUsd: 0.05 },
     limits: {
       maxPromptChars: 3000,
     },
@@ -591,9 +558,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "grok-imagine-image",
     displayName: "Grok Imagine Image 2.0",
     modality: "image",
-    provider: "openrouter",
-    upstreamModelId: "x-ai/grok-imagine-image-2.0",
+    provider: "fal",
+    upstreamModelId: "fal-ai/flux-pro",
     price: process.env.PRICE_GROK_IMAGE || "$0.25",
+    rates: { unitRateUsd: 0.05 },
     limits: {
       maxPromptChars: 3000,
     },
@@ -605,9 +573,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "recraft-v3",
     displayName: "Recraft V3",
     modality: "image",
-    provider: "openrouter",
-    upstreamModelId: "recraft/recraft-v3",
+    provider: "fal",
+    upstreamModelId: "fal-ai/recraft-v3",
     price: process.env.PRICE_RECRAFT || "$0.25",
+    rates: { unitRateUsd: 0.04 },
     limits: {
       maxPromptChars: 3000,
     },
@@ -617,7 +586,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
   },
 
   // ----------------------------------------------------
-  // Voice / Audio Speech Models (Over 500% Markup)
+  // Voice / Audio Speech Models (OpenAI, OpenRouter & ElevenLabs)
   // ----------------------------------------------------
   {
     slug: "gpt-audio-mini",
@@ -626,6 +595,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-audio-mini",
     price: process.env.PRICE_GPT_AUDIO_MINI || "$0.02",
+    rates: { inputPerMillionUsd: 0.60, outputPerMillionUsd: 2.40 },
     limits: {
       maxPromptChars: 1000,
     },
@@ -637,9 +607,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "tts-1",
     displayName: "OpenAI TTS-1",
     modality: "voice",
-    provider: "openrouter",
-    upstreamModelId: "openrouter/free",
+    provider: "openai",
+    upstreamModelId: "tts-1",
     price: process.env.PRICE_TTS1 || "$0.10",
+    rates: { unitRateUsd: 0.015 }, // per 1k characters
     limits: {
       maxPromptChars: 1000,
     },
@@ -651,9 +622,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "tts-1-hd",
     displayName: "OpenAI TTS-1 HD",
     modality: "voice",
-    provider: "openrouter",
-    upstreamModelId: "openrouter/free",
+    provider: "openai",
+    upstreamModelId: "tts-1-hd",
     price: process.env.PRICE_TTS1_HD || "$0.20",
+    rates: { unitRateUsd: 0.030 }, // per 1k characters
     limits: {
       maxPromptChars: 1000,
     },
@@ -668,6 +640,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     provider: "openrouter",
     upstreamModelId: "openai/gpt-audio",
     price: process.env.PRICE_GPT_AUDIO || "$0.20",
+    rates: { inputPerMillionUsd: 2.50, outputPerMillionUsd: 10.00 },
     limits: {
       maxPromptChars: 1000,
     },
@@ -679,9 +652,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "eleven-multilingual",
     displayName: "ElevenLabs Multilingual V2",
     modality: "voice",
-    provider: "openrouter",
-    upstreamModelId: "openrouter/free",
+    provider: "elevenlabs",
+    upstreamModelId: "eleven_multilingual_v2",
     price: process.env.PRICE_ELEVENLABS || "$0.20",
+    rates: { unitRateUsd: 0.030 }, // per 1k characters
     limits: {
       maxPromptChars: 1000,
     },
@@ -691,15 +665,16 @@ export const INITIAL_MODELS: ModelDefinition[] = [
   },
 
   // ----------------------------------------------------
-  // Video Generation Models (Over 500% Markup)
+  // Video Generation Models (fal.ai & OpenAI)
   // ----------------------------------------------------
   {
     slug: "veo-3.1-fast",
     displayName: "Google Veo 3.1 Fast",
     modality: "video",
-    provider: "openrouter",
-    upstreamModelId: "google/veo-3.1-fast",
+    provider: "fal",
+    upstreamModelId: "fal-ai/veo2",
     price: process.env.PRICE_VEO_FAST || "$0.25",
+    rates: { unitRateUsd: 0.05 }, // per second
     limits: {
       maxPromptChars: 2500,
       maxDurationSeconds: 5,
@@ -712,9 +687,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "kling-v3.0-std",
     displayName: "Kling Video V3.0",
     modality: "video",
-    provider: "openrouter",
-    upstreamModelId: "kwaivgi/kling-v3.0-std",
+    provider: "fal",
+    upstreamModelId: "fal-ai/kling-video/v1/standard/text-to-video",
     price: process.env.PRICE_KLING_STD || "$0.275",
+    rates: { unitRateUsd: 0.055 },
     limits: {
       maxPromptChars: 2500,
       maxDurationSeconds: 5,
@@ -727,9 +703,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "wan-3.0",
     displayName: "Alibaba Wan 3.0",
     modality: "video",
-    provider: "openrouter",
-    upstreamModelId: "alibaba/wan-3.0",
+    provider: "fal",
+    upstreamModelId: "fal-ai/wan/v2.1",
     price: process.env.PRICE_WAN || "$0.30",
+    rates: { unitRateUsd: 0.06 },
     limits: {
       maxPromptChars: 2500,
       maxDurationSeconds: 5,
@@ -742,9 +719,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "hailuo-3",
     displayName: "MiniMax Hailuo H3",
     modality: "video",
-    provider: "openrouter",
-    upstreamModelId: "minimax/hailuo-3",
+    provider: "fal",
+    upstreamModelId: "fal-ai/minimax/video-01",
     price: process.env.PRICE_HAILUO || "$0.40",
+    rates: { unitRateUsd: 0.08 },
     limits: {
       maxPromptChars: 2000,
       maxDurationSeconds: 5,
@@ -757,9 +735,10 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     slug: "sora-2-pro",
     displayName: "OpenAI Sora 2 Pro",
     modality: "video",
-    provider: "openrouter",
-    upstreamModelId: "openai/sora-2-pro",
+    provider: "openai",
+    upstreamModelId: "sora-2-pro",
     price: process.env.PRICE_SORA_PRO || "$1.00",
+    rates: { unitRateUsd: 0.20 },
     limits: {
       maxPromptChars: 2500,
       maxDurationSeconds: 5,

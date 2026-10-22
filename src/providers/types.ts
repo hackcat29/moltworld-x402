@@ -34,6 +34,9 @@ export interface ChatCompletionResponse {
   model: string;
   choices: ChatCompletionChoice[];
   usage?: ChatCompletionUsage;
+  upstreamProvider?: string;
+  upstreamModel?: string;
+  upstreamCostUsd?: number;
 }
 
 // ----------------------------------------------------
@@ -57,6 +60,9 @@ export interface GeneratedImageItem {
 export interface ImageGenerationResponse {
   created: number;
   data: GeneratedImageItem[];
+  upstreamProvider?: string;
+  upstreamModel?: string;
+  upstreamCostUsd?: number;
 }
 
 // ----------------------------------------------------
@@ -79,6 +85,9 @@ export interface AudioSpeechResponse {
   format: string;
   duration_seconds: number;
   character_count: number;
+  upstreamProvider?: string;
+  upstreamModel?: string;
+  upstreamCostUsd?: number;
 }
 
 // ----------------------------------------------------
@@ -100,6 +109,10 @@ export interface VideoGenerationResponse {
   video_url: string;
   duration_seconds: number;
   aspect_ratio: string;
+  upstreamProvider?: string;
+  upstreamModel?: string;
+  upstreamCostUsd?: number;
+  jobId?: string;
 }
 
 // ----------------------------------------------------

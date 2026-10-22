@@ -2,141 +2,9 @@ import {
   AIProvider,
   ChatCompletionRequest,
   ChatCompletionResponse,
-  ImageGenerationRequest,
-  ImageGenerationResponse,
   AudioSpeechRequest,
   AudioSpeechResponse,
-  VideoGenerationRequest,
-  VideoGenerationResponse,
 } from "./types.js";
-
-// Priority free models router on OpenRouter (OpenRouter allows max 3 models in fallback array).
-// Every entry must be genuinely free. A paid model anywhere in this array — such
-// as "openrouter/auto" — makes OpenRouter apply a credit check to the whole
-// request, so it returns 402 "requires more credits" without ever trying the
-// free candidates, which the gateway then surfaces as a 502 on every chat call.
-// General-purpose models lead the chain. "openrouter/free" is a router that can
-// land on a special-purpose model — a content-safety classifier that answers
-// "User Safety: safe", or one that returns empty content — so it sits last as a
-// fallback rather than first.
-const OPENROUTER_FREE_MODELS = [
-  process.env.OPENROUTER_FREE_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
-  "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "openrouter/free",
-];
-
-function generateWavBase64(durationSeconds: number, text: string): string {
-  const sampleRate = 8000;
-  const numSamples = Math.min(Math.floor(sampleRate * durationSeconds), sampleRate * 30);
-  const dataSize = numSamples;
-  const fileSize = 36 + dataSize;
-
-  const buffer = Buffer.alloc(44 + dataSize);
-  // RIFF header
-  buffer.write("RIFF", 0);
-  buffer.writeUInt32LE(fileSize, 4);
-  buffer.write("WAVE", 8);
-  // fmt subchunk
-  buffer.write("fmt ", 12);
-  buffer.writeUInt32LE(16, 16); // Subchunk1Size
-  buffer.writeUInt16LE(1, 20); // PCM format
-  buffer.writeUInt16LE(1, 22); // Mono
-  buffer.writeUInt32LE(sampleRate, 24); // SampleRate
-  buffer.writeUInt32LE(sampleRate, 28); // ByteRate
-  buffer.writeUInt16LE(1, 32); // BlockAlign
-  buffer.writeUInt16LE(8, 34); // BitsPerSample
-  // data subchunk
-  buffer.write("data", 36);
-  buffer.writeUInt32LE(dataSize, 40);
-
-  // Generate gentle audible tone waveform based on text characters
-  for (let i = 0; i < numSamples; i++) {
-    const charCode = text.charCodeAt(i % Math.max(1, text.length)) || 65;
-    const freq = 220 + (charCode % 12) * 20;
-    const sample = Math.sin((2 * Math.PI * freq * i) / sampleRate);
-    buffer.writeUInt8(Math.floor((sample + 1) * 127.5), 44 + i);
-  }
-
-  return buffer.toString("base64");
-}
-
-// Secondary pool tried when the primary chain is rate-limited or refuses the
-// request. Kept distinct so one provider having a bad minute is recoverable.
-const OPENROUTER_FALLBACK_MODELS = [
-  "google/gemma-4-31b-it:free",
-  "qwen/qwen3.8-27b:free",
-  "openrouter/free",
-];
-
-function buildChatFallbackResponse(
-  modelSlug: string,
-  request: ChatCompletionRequest,
-  cause?: Error
-): ChatCompletionResponse {
-  const reason = cause?.message || "upstream inference capacity was unavailable";
-  const promptChars = request.messages.reduce((n, m) => n + m.content.length, 0);
-
-  return {
-    id: `chatcmpl-moltworld-degraded-${Date.now()}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model: modelSlug,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content:
-            `[moltworld: degraded response] No model output was generated for this request — ${reason}. ` +
-            `This is not a model completion and should not be treated as one. ` +
-            `Retry shortly; upstream free-tier capacity resets on a daily cycle.`,
-        },
-        finish_reason: "stop",
-      },
-    ],
-    usage: {
-      prompt_tokens: Math.ceil(promptChars / 4),
-      completion_tokens: 0,
-      total_tokens: Math.ceil(promptChars / 4),
-    },
-  };
-}
-
-function createFallbackSvg(prompt: string, modelSlug: string): string {
-  const escapedPrompt = prompt
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .slice(0, 100);
-
-  return `<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0b0e14"/>
-      <stop offset="50%" stop-color="#141a29"/>
-      <stop offset="100%" stop-color="#05070a"/>
-    </linearGradient>
-    <linearGradient id="acc" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#00d2aa"/>
-      <stop offset="100%" stop-color="#60a5fa"/>
-    </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>
-  <rect width="1024" height="1024" fill="url(#bg)" rx="48"/>
-  <circle cx="512" cy="420" r="220" fill="none" stroke="url(#acc)" stroke-width="4" stroke-dasharray="12 12" filter="url(#glow)"/>
-  <polygon points="512,280 620,490 404,490" fill="none" stroke="#00d2aa" stroke-width="8" filter="url(#glow)"/>
-  <circle cx="512" cy="420" r="40" fill="#60a5fa" filter="url(#glow)"/>
-  <text x="512" y="720" font-family="Inter, sans-serif" font-size="34" font-weight="700" fill="#ffffff" text-anchor="middle">Moltworld x402 Generation</text>
-  <text x="512" y="770" font-family="JetBrains Mono, monospace" font-size="22" font-weight="600" fill="#00d2aa" text-anchor="middle">${modelSlug}</text>
-  <text x="512" y="830" font-family="Inter, sans-serif" font-size="20" fill="#9ca3af" text-anchor="middle">${escapedPrompt}</text>
-</svg>`;
-}
 
 export class OpenRouterProvider implements AIProvider {
   readonly id = "openrouter";
@@ -150,181 +18,97 @@ export class OpenRouterProvider implements AIProvider {
     }
   }
 
-  private async callOpenRouterFree(payload: any, signal: AbortSignal): Promise<any> {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://moltworld.xyz",
-        "X-Title": "Moltworld x402 AI Gateway",
-      },
-      body: JSON.stringify(payload),
-      signal,
-    });
-
-    if (!response.ok) {
-      let errorDetail = `Status ${response.status}`;
-      try {
-        const errBody = await response.json();
-        if (errBody?.error?.message) {
-          errorDetail = String(errBody.error.message);
-        }
-      } catch {
-        // ignore parsing error
-      }
-      errorDetail = errorDetail.replace(this.apiKey, "[REDACTED]");
-      throw new Error(`Upstream model provider returned error: ${errorDetail}`);
-    }
-
-    return response.json();
-  }
-
   async chatComplete(
     modelIdentifier: string,
     request: ChatCompletionRequest,
     modelSlug: string
   ): Promise<ChatCompletionResponse> {
-    const want = request.max_tokens ?? 1024;
-    const deadline = Date.now() + this.timeoutMs;
-
-    // Escalating ladder: a different free pool, then a smaller output budget.
-    // The free tier refuses large max_tokens once its daily allowance is spent,
-    // so shrinking the request is often enough to still get real model output.
-    const ladder = [
-      { models: OPENROUTER_FREE_MODELS, max_tokens: want },
-      { models: OPENROUTER_FALLBACK_MODELS, max_tokens: Math.min(want, 512) },
-      { models: OPENROUTER_FREE_MODELS, max_tokens: 256 },
-    ];
-
-    let lastError: Error | undefined;
-
-    for (const attempt of ladder) {
-      const remaining = deadline - Date.now();
-      if (remaining < 4000) break; // not enough budget left for a useful try
-
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        Math.min(remaining, Math.max(7000, Math.floor(this.timeoutMs / ladder.length)))
-      );
-
-      try {
-        const data = await this.callOpenRouterFree(
-          {
-            models: attempt.models,
-            messages: request.messages,
-            temperature: request.temperature ?? 0.7,
-            max_tokens: attempt.max_tokens,
-          },
-          controller.signal
-        );
-
-        const choices = (data.choices || []).map((choice: any, idx: number) => ({
-          index: choice.index ?? idx,
-          message: {
-            role: choice.message?.role || "assistant",
-            content: choice.message?.content || choice.message?.reasoning || "",
-          },
-          finish_reason: choice.finish_reason || "stop",
-        }));
-
-        // Some free models answer 200 with an empty body; that is not a usable
-        // result for a paid request, so fall through to the next rung.
-        if (!choices.length || !choices[0].message.content.trim()) {
-          lastError = new Error("Upstream returned an empty completion.");
-          continue;
-        }
-
-        return {
-          id: data.id || `chatcmpl-moltworld-${Date.now()}`,
-          object: "chat.completion",
-          created: data.created || Math.floor(Date.now() / 1000),
-          model: modelSlug,
-          choices,
-          usage: data.usage
-            ? {
-                prompt_tokens: data.usage.prompt_tokens || 0,
-                completion_tokens: data.usage.completion_tokens || 0,
-                total_tokens: data.usage.total_tokens || 0,
-              }
-            : undefined,
-        };
-      } catch (err: any) {
-        lastError = err?.name === "AbortError"
-          ? new Error("Upstream AI model request timed out.")
-          : err;
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-
-    // Every rung failed. Return a well-formed response that states plainly that
-    // no model output was produced, rather than inventing an answer — the caller
-    // paid for this request and must be able to tell a real completion from a
-    // degraded one.
-    return buildChatFallbackResponse(modelSlug, request, lastError);
-  }
-
-  async generateImage(
-    modelIdentifier: string,
-    request: ImageGenerationRequest,
-    modelSlug: string
-  ): Promise<ImageGenerationResponse> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      let svgText = "";
-      try {
-        const data = await this.callOpenRouterFree(
-          {
-            models: OPENROUTER_FREE_MODELS,
-            messages: [
-              {
-                role: "system",
-                content:
-                  'You are an SVG graphic design engine. Output ONLY a valid standalone <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">...</svg> that visually illustrates the prompt. Do not include markdown codeblocks or explanation.',
-              },
-              {
-                role: "user",
-                content: request.prompt,
-              },
-            ],
-            max_tokens: 1500,
-          },
-          controller.signal
-        );
+      const payload: Record<string, unknown> = {
+        model: modelIdentifier,
+        messages: request.messages,
+        temperature: request.temperature ?? 0.7,
+        usage: { include: true },
+        provider: {
+          allow_fallbacks: false, // Disallow routing to different model architectures
+        },
+      };
 
-        const content = data.choices?.[0]?.message?.content || "";
-        const svgMatch = content.match(/<\s*svg[\s\S]*?<\/\s*svg\s*>/i);
-        if (svgMatch) {
-          svgText = svgMatch[0];
+      if (request.max_tokens) {
+        payload.max_tokens = request.max_tokens;
+      }
+
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://moltworld.xyz",
+          "X-Title": "Moltworld x402 AI Gateway",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        let errorDetail = `Status ${response.status}`;
+        try {
+          const errBody = await response.json();
+          if (errBody?.error?.message) {
+            errorDetail = String(errBody.error.message);
+          }
+        } catch {
+          // ignore parsing error
         }
-      } catch {
-        // Fallback to stylized SVG
+        errorDetail = errorDetail.replace(this.apiKey, "[REDACTED]");
+        throw new Error(`Upstream OpenRouter model error: ${errorDetail}`);
       }
 
-      if (!svgText) {
-        svgText = createFallbackSvg(request.prompt, modelSlug);
+      const data = await response.json();
+
+      const choices = (data.choices || []).map((choice: any, idx: number) => ({
+        index: choice.index ?? idx,
+        message: {
+          role: choice.message?.role || "assistant",
+          content: choice.message?.content || choice.message?.reasoning || "",
+        },
+        finish_reason: choice.finish_reason || "stop",
+      }));
+
+      if (!choices.length || !choices[0].message.content.trim()) {
+        throw new Error("Upstream OpenRouter model returned an empty completion.");
       }
 
-      const b64 = Buffer.from(svgText, "utf8").toString("base64");
-      const size = request.size || "1024x1024";
+      const upstreamCostUsd =
+        typeof data.usage?.cost === "number"
+          ? data.usage.cost
+          : typeof data.usage?.total_cost === "number"
+          ? data.usage.total_cost
+          : undefined;
 
       return {
-        created: Math.floor(Date.now() / 1000),
-        data: [
-          {
-            url: `data:image/svg+xml;base64,${b64}`,
-            b64_json: b64,
-            revised_prompt: `[Moltworld Verified x402 - ${modelSlug} (${size})]: ${request.prompt}`,
-          },
-        ],
+        id: data.id || `chatcmpl-moltworld-${Date.now()}`,
+        object: "chat.completion",
+        created: data.created || Math.floor(Date.now() / 1000),
+        model: modelSlug,
+        choices,
+        usage: data.usage
+          ? {
+              prompt_tokens: data.usage.prompt_tokens || 0,
+              completion_tokens: data.usage.completion_tokens || 0,
+              total_tokens: data.usage.total_tokens || 0,
+            }
+          : undefined,
+        upstreamProvider: "openrouter",
+        upstreamModel: data.model || modelIdentifier,
+        upstreamCostUsd,
       };
     } catch (err: any) {
       if (err.name === "AbortError") {
-        throw new Error("Upstream image generation request timed out.");
+        throw new Error(`Upstream model request timed out after ${this.timeoutMs}ms.`);
       }
       throw err;
     } finally {
@@ -337,106 +121,60 @@ export class OpenRouterProvider implements AIProvider {
     request: AudioSpeechRequest,
     modelSlug: string
   ): Promise<AudioSpeechResponse> {
+    // OpenRouter audio modality for gpt-audio models
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    const format = request.response_format || "wav";
 
     try {
-      try {
-        await this.callOpenRouterFree(
-          {
-            models: OPENROUTER_FREE_MODELS,
-            messages: [
-              {
-                role: "system",
-                content: "You are a voice synthesis preprocessor. Clean and verify the text for speech delivery.",
-              },
-              {
-                role: "user",
-                content: request.input,
-              },
-            ],
-            max_tokens: 100,
-          },
-          controller.signal
-        );
-      } catch {
-        // Continue with audio synthesis
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://moltworld.xyz",
+          "X-Title": "Moltworld x402 AI Gateway",
+        },
+        body: JSON.stringify({
+          model: modelIdentifier,
+          modalities: ["text", "audio"],
+          audio: { voice: request.voice || "alloy", format: request.response_format || "wav" },
+          messages: [{ role: "user", content: request.input }],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errText = (await response.text()).replace(this.apiKey, "[REDACTED]");
+        throw new Error(`OpenRouter audio generation error: ${errText}`);
       }
 
-      const durationSeconds = parseFloat(Math.max(1.5, request.input.length / 15).toFixed(2));
-      const audioB64 = generateWavBase64(durationSeconds, request.input);
-      const audioUrl = `data:audio/wav;base64,${audioB64}`;
+      const data = await response.json();
+      const audioData = data.choices?.[0]?.message?.audio;
+      if (!audioData?.data) {
+        throw new Error("Upstream model did not return audio synthesis data.");
+      }
+
+      const format = request.response_format || "wav";
+      const audioB64 = audioData.data;
+      const audioUrl = `data:audio/${format};base64,${audioB64}`;
 
       return {
-        id: `audio-free-${Date.now()}`,
+        id: `audio-or-${Date.now()}`,
         object: "audio.speech",
         created: Math.floor(Date.now() / 1000),
         model: modelSlug,
         audio_url: audioUrl,
         audio_b64: audioB64,
         format,
-        duration_seconds: durationSeconds,
+        duration_seconds: parseFloat((request.input.length / 15).toFixed(2)),
         character_count: request.input.length,
+        upstreamProvider: "openrouter",
+        upstreamModel: modelIdentifier,
+        upstreamCostUsd: typeof data.usage?.cost === "number" ? data.usage.cost : undefined,
       };
     } catch (err: any) {
       if (err.name === "AbortError") {
-        throw new Error("Upstream voice generation request timed out.");
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async generateVideo(
-    modelIdentifier: string,
-    request: VideoGenerationRequest,
-    modelSlug: string
-  ): Promise<VideoGenerationResponse> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-
-    try {
-      try {
-        await this.callOpenRouterFree(
-          {
-            models: OPENROUTER_FREE_MODELS,
-            messages: [
-              {
-                role: "system",
-                content: "You are a cinematic director. Generate 3 camera shots and motion descriptions for the video prompt.",
-              },
-              {
-                role: "user",
-                content: request.prompt,
-              },
-            ],
-            max_tokens: 200,
-          },
-          controller.signal
-        );
-      } catch {
-        // Continue with video response
-      }
-
-      const duration = request.duration || 5;
-      const aspect = request.aspect_ratio || "16:9";
-      const jobId = `vid-free-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-
-      return {
-        id: jobId,
-        object: "video.generation",
-        created: Math.floor(Date.now() / 1000),
-        model: modelSlug,
-        status: "completed",
-        video_url: `https://video.moltworld.xyz/generated/${modelSlug}/${jobId}.mp4`,
-        duration_seconds: duration,
-        aspect_ratio: aspect,
-      };
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        throw new Error("Upstream video generation request timed out.");
+        throw new Error(`Upstream voice generation timed out after ${this.timeoutMs}ms.`);
       }
       throw err;
     } finally {
