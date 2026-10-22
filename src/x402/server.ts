@@ -9,6 +9,7 @@ import {
   bazaarResourceServerExtension,
   declareDiscoveryExtension,
 } from "@x402-avm/extensions";
+import algosdk from "algosdk";
 import {
   config,
   ALGORAND_TESTNET_FACILITATOR_CAIP2,
@@ -17,6 +18,25 @@ import {
   ALGORAND_MAINNET_CANONICAL_CAIP2,
 } from "../config.js";
 import { ModelRegistry, defaultModelRegistry, getModelEndpoint, getModelDiscoveryDescription, ModelDefinition } from "../models/registry.js";
+import { calculateRequestQuote } from "../pricing/index.js";
+import { redisStore } from "../store/redis.js";
+import { dbStore } from "../store/db.js";
+import { refundService } from "../refunds/index.js";
+
+function extractPayerFromPayload(payload: any): string | null {
+  try {
+    const rawPayload = payload?.payload;
+    if (rawPayload?.paymentGroup && Array.isArray(rawPayload.paymentGroup)) {
+      const idx = rawPayload.paymentIndex ?? 0;
+      const b64 = rawPayload.paymentGroup[idx];
+      if (b64) {
+        const decoded = algosdk.decodeSignedTransaction(Buffer.from(b64, "base64"));
+        return algosdk.encodeAddress(decoded.txn.sender.publicKey);
+      }
+    }
+  } catch {}
+  return null;
+}
 
 export function createX402Server(): {
   server: x402ResourceServer;
@@ -36,6 +56,50 @@ export function createX402Server(): {
 
   // Register Bazaar resource-server discovery extension
   server.registerExtension(bazaarResourceServerExtension);
+
+  // Lifecycle Hooks for Concurrency, Ledger & Automated Refunds
+  server.onBeforeVerify(async (context) => {
+    const payer = extractPayerFromPayload(context.paymentPayload);
+    const amountMicro = Number(context.requirements.amount || 0);
+    if (payer && amountMicro > 0) {
+      await redisStore.reservePayerFunds(payer, amountMicro);
+    }
+  });
+
+  server.onAfterSettle(async (context) => {
+    const payer = context.result.payer || extractPayerFromPayload(context.paymentPayload);
+    const amountMicro = Number(context.requirements.amount || 0);
+    if (payer && amountMicro > 0) {
+      await redisStore.releasePayerFunds(payer, amountMicro);
+    }
+  });
+
+  server.onSettleFailure(async (context) => {
+    const payer = extractPayerFromPayload(context.paymentPayload);
+    const amountMicro = Number(context.requirements.amount || 0);
+    if (payer && amountMicro > 0) {
+      await redisStore.releasePayerFunds(payer, amountMicro);
+    }
+  });
+
+  server.onVerifiedPaymentCanceled(async (context) => {
+    const payer = extractPayerFromPayload(context.paymentPayload);
+    const amountMicro = Number(context.requirements.amount || 0);
+    if (payer && amountMicro > 0) {
+      await redisStore.releasePayerFunds(payer, amountMicro);
+    }
+
+    // Automated Refund for Upfront-Settled Requests that failed in resource handler
+    if (context.settledPhases && context.settledPhases.includes("before-handler") && payer && amountMicro > 0) {
+      console.warn(`[Automated Refund] Upfront settlement cancelled (${context.reason}). Triggering refund to ${payer}...`);
+      await refundService.processRefund({
+        requestId: `cancel-${Date.now()}`,
+        payerAddress: payer,
+        amountMicroUsdc: amountMicro,
+        reason: `Upfront payment settled but request handler aborted (${context.reason})`,
+      });
+    }
+  });
 
   const routes = buildX402Routes(defaultModelRegistry);
 
@@ -196,16 +260,25 @@ export function buildX402Routes(registry: ModelRegistry): RoutesConfig {
 
   for (const model of models) {
     const routeKey = `POST ${getModelEndpoint(model)}`;
+    const isUpfront = model.modality === "image" || model.modality === "video";
 
     routes[routeKey] = {
       accepts: {
         scheme: "exact",
-        price: model.price,
+        price: async (ctx) => {
+          let body: any;
+          if (ctx.adapter.getBody) {
+            body = await ctx.adapter.getBody();
+          }
+          const quote = calculateRequestQuote(model, body);
+          return quote.formattedPrice;
+        },
         network: config.networkCaip2,
         payTo: config.payToAddress,
         extra: {
           asset: config.usdcAsaId,
           tag: "x402-global-challenge",
+          ...(isUpfront ? { paymentFlow: "upfront" } : {}),
         },
       },
       description: getModelDiscoveryDescription(model),
