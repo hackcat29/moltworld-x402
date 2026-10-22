@@ -1,10 +1,13 @@
 import { Context, Next } from "hono";
 import crypto from "crypto";
 import { config } from "../config.js";
+import { coordination } from "../payments/coordination.js";
 
 // Request ID middleware
 export async function requestIdMiddleware(c: Context, next: Next): Promise<void> {
-  const reqId = c.req.header("x-request-id") || crypto.randomUUID();
+  // Client-supplied ids are only echoed for log correlation (length-capped); ledger ids are server-generated.
+  const supplied = c.req.header("x-request-id");
+  const reqId = supplied && /^[\w.-]{1,64}$/.test(supplied) ? supplied : crypto.randomUUID();
   c.set("requestId", reqId);
   c.header("x-request-id", reqId);
   await next();
@@ -30,79 +33,30 @@ export async function securityHeadersMiddleware(c: Context, next: Next): Promise
     c.header("Cache-Control", "public, max-age=5");
   }
 
-  // Ensure x402 payment headers are exposed to CORS callers
-  c.header("Access-Control-Expose-Headers", "Payment-Required, Payment-Response, x-request-id");
+  // Ensure x402 and receipt headers are exposed to CORS callers
+  c.header(
+    "Access-Control-Expose-Headers",
+    "Payment-Required, Payment-Response, Moltworld-Receipt, Moltworld-Request-Id, Moltworld-Quote, Moltworld-Replay, Moltworld-Refund, x-request-id"
+  );
 }
 
-// In-memory sliding window rate limiter for free/unpaid routes
-class RateLimiter {
-  private requests: Map<string, number[]> = new Map();
-  private lastCleanup: number = Date.now();
-
-  constructor(
-    private readonly windowMs: number,
-    private readonly maxRequests: number
-  ) {}
-
-  isRateLimited(ip: string): boolean {
-    const now = Date.now();
-    if (now - this.lastCleanup > this.windowMs * 2) {
-      this.cleanup();
-      this.lastCleanup = now;
-    }
-    const windowStart = now - this.windowMs;
-
-    let timestamps = this.requests.get(ip) || [];
-    timestamps = timestamps.filter((t) => t > windowStart);
-
-    if (timestamps.length >= this.maxRequests) {
-      return true;
-    }
-
-    timestamps.push(now);
-    this.requests.set(ip, timestamps);
-    return false;
-  }
-
-  private cleanup(): void {
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
-    for (const [ip, timestamps] of this.requests.entries()) {
-      const active = timestamps.filter((t) => t > windowStart);
-      if (active.length === 0) {
-        this.requests.delete(ip);
-      } else {
-        this.requests.set(ip, active);
-      }
-    }
-  }
+export function clientIp(c: Context): string {
+  return c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0].trim() || "direct";
 }
 
-const freeRouteLimiter = new RateLimiter(
-  config.rateLimitWindowMs,
-  config.rateLimitMaxRequests
-);
-
-export async function rateLimitFreeRoutesMiddleware(c: Context, next: Next): Promise<Response | void> {
-  const ip =
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-forwarded-for")?.split(",")[0].trim() ||
-    "client-ip";
-
-  if (freeRouteLimiter.isRateLimited(ip)) {
-    return c.json(
-      {
-        error: {
-          message: "Too many requests. Please slow down.",
-          type: "rate_limit_error",
-        },
-      },
-      429
-    );
-  }
-
-  await next();
+/** Fixed-window rate limit per client IP, shared across processes when Redis is configured. */
+export function rateLimit(bucket: string, max = config.rateLimitMaxRequests, windowMs = config.rateLimitWindowMs) {
+  return async (c: Context, next: Next): Promise<Response | void> => {
+    const result = await coordination.rateLimit(`${bucket}:${clientIp(c)}`, max, windowMs);
+    if (!result.allowed) {
+      c.header("Retry-After", String(Math.ceil(result.resetMs / 1000)));
+      return c.json({ error: { code: "rate_limited", message: "Too many requests. Please slow down." } }, 429);
+    }
+    await next();
+  };
 }
+
+export const rateLimitFreeRoutesMiddleware = rateLimit("free");
 
 // Structured request logger
 export async function structuredLogger(c: Context, next: Next): Promise<void> {
@@ -117,7 +71,7 @@ export async function structuredLogger(c: Context, next: Next): Promise<void> {
     path: c.req.path,
     status: c.res.status,
     durationMs: duration,
-    ip: c.req.header("cf-connecting-ip") || "direct",
+    ip: clientIp(c),
   };
 
   // Skip noisy healthcheck logs in production if healthy
@@ -141,7 +95,7 @@ export function safeErrorHandler(err: Error, c: Context): Response {
   );
 
   let message = "An internal server error occurred.";
-  if (config.env !== "production" || err.message.startsWith("Upstream model provider")) {
+  if (config.env !== "production") {
     message = err.message;
   }
 

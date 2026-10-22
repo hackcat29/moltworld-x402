@@ -1,104 +1,150 @@
 import { ModelDefinition } from "../models/registry.js";
 import { config } from "../config.js";
+import type {
+  AudioSpeechRequest,
+  ChatCompletionRequest,
+  ImageGenerationRequest,
+  VideoGenerationRequest,
+} from "../providers/types.js";
 
 export interface PriceQuote {
   modelSlug: string;
   modality: string;
-  estimatedInputTokens?: number;
-  maxOutputTokens?: number;
-  durationSeconds?: number;
-  characterCount?: number;
-  imageCount?: number;
-  rawUpstreamCostUsd: number;
+  /** Units the quote was computed from, so a client can audit it. */
+  units: {
+    estimatedInputTokens?: number;
+    maxOutputTokens?: number;
+    images?: number;
+    characters?: number;
+    seconds?: number;
+  };
+  costBasis: ModelDefinition["cost"];
+  costSource: ModelDefinition["costSource"];
+  upstreamCostUsd: number;
   marginPercent: number;
   finalPriceUsd: number;
-  formattedPrice: string; // e.g. "$0.003254"
-  microUsdc: number; // 6 decimal places integer
+  formattedPrice: string;
+  microUsdc: number;
 }
 
-export function formatUsdcPrice(amountUsd: number): string {
-  // Ensure minimum floor
-  const floor = Math.max(config.priceMinFloor, amountUsd);
-  // Round to nearest micro-USDC (6 decimal places)
-  const microUsdc = Math.ceil(floor * 1_000_000);
-  const formatted = (microUsdc / 1_000_000).toFixed(6).replace(/(\.\d*?[1-9])0+$|\.000000$/, "$1");
-  return `$${formatted}`;
+export type ValidatedRequest =
+  | ChatCompletionRequest
+  | ImageGenerationRequest
+  | AudioSpeechRequest
+  | VideoGenerationRequest;
+
+const MICRO = 1_000_000;
+
+/**
+ * Conservative token estimate: one token per three UTF-8 bytes plus per-message
+ * framing. Byte-based counting keeps CJK and emoji-heavy prompts from being
+ * under-quoted the way a characters/4 heuristic would.
+ */
+export function estimateInputTokens(messages: { content: string }[]): number {
+  const bytes = messages.reduce((acc, m) => acc + Buffer.byteLength(m.content, "utf8"), 0);
+  return Math.ceil(bytes / 3) + messages.length * 8 + 4;
 }
 
-export function calculateRequestQuote(model: ModelDefinition, body?: any): PriceQuote {
-  const margin = config.priceMargin; // e.g. 0.30 (30%)
-  let rawCost = 0;
-  let estimatedInputTokens: number | undefined;
-  let maxOutputTokens: number | undefined;
-  let durationSeconds: number | undefined;
-  let characterCount: number | undefined;
-  let imageCount: number | undefined;
+export function microToUsdString(micro: number): string {
+  const whole = Math.floor(micro / MICRO);
+  const frac = String(micro % MICRO).padStart(6, "0").replace(/0+$/, "");
+  return frac ? `$${whole}.${frac}` : `$${whole}`;
+}
 
+export function usdToMicroCeil(usd: number): number {
+  // Round away float noise before taking the ceiling (0.1 + 0.2 style artifacts).
+  return Math.ceil(Number((usd * MICRO).toFixed(4)));
+}
+
+export function priceFromCost(upstreamCostUsd: number, margin = config.priceMargin): { microUsdc: number; usd: number } {
+  const floorMicro = usdToMicroCeil(config.priceMinFloor);
+  const microUsdc = Math.max(floorMicro, usdToMicroCeil(upstreamCostUsd * (1 + margin)));
+  return { microUsdc, usd: microUsdc / MICRO };
+}
+
+/**
+ * Upstream cost of a request in USD. For chat this is the worst case (the full
+ * max_tokens budget); the difference to actual usage is rebated after the call.
+ */
+export function upstreamCostFor(model: ModelDefinition, request: ValidatedRequest): { usd: number; units: PriceQuote["units"] } {
+  const cost = model.cost;
   switch (model.modality) {
     case "chat": {
-      const messages = Array.isArray(body?.messages) ? body.messages : [];
-      const totalChars = messages.reduce(
-        (acc: number, m: any) => acc + (typeof m?.content === "string" ? m.content.length : 0),
-        0
-      );
-      // Rough token estimation: ~3.8 chars per token for multilingual/code
-      estimatedInputTokens = Math.max(10, Math.ceil(totalChars / 3.8));
-      maxOutputTokens =
-        typeof body?.max_tokens === "number" && body.max_tokens > 0
-          ? Math.min(body.max_tokens, model.limits.maxOutputTokens || 2048)
-          : Math.min(1024, model.limits.maxOutputTokens || 2048);
-
-      const inRate = (model.rates?.inputPerMillionUsd ?? 1.0) / 1_000_000;
-      const outRate = (model.rates?.outputPerMillionUsd ?? 2.0) / 1_000_000;
-
-      rawCost = estimatedInputTokens * inRate + maxOutputTokens * outRate;
-      break;
+      const req = request as ChatCompletionRequest;
+      if (cost.kind !== "tokens") throw new Error(`Chat model ${model.slug} needs a token cost basis.`);
+      const estimatedInputTokens = estimateInputTokens(req.messages);
+      const maxOutputTokens = req.max_tokens ?? model.limits.maxOutputTokens ?? 1024;
+      const usd =
+        (estimatedInputTokens * cost.inputPerMillionUsd + maxOutputTokens * cost.outputPerMillionUsd) / 1_000_000;
+      return { usd, units: { estimatedInputTokens, maxOutputTokens } };
     }
-
     case "image": {
-      imageCount = Math.max(1, Math.min(Number(body?.n) || 1, 4));
-      const unitRate = model.rates?.unitRateUsd ?? 0.04;
-      rawCost = imageCount * unitRate;
-      break;
+      const req = request as ImageGenerationRequest;
+      if (cost.kind !== "per_image") throw new Error(`Image model ${model.slug} needs a per-image cost basis.`);
+      const images = req.n ?? 1;
+      return { usd: images * cost.usd, units: { images } };
     }
-
     case "voice": {
-      const input = typeof body?.input === "string" ? body.input : "";
-      characterCount = Math.max(1, input.length);
-      const ratePer1k = model.rates?.unitRateUsd ?? 0.03;
-      rawCost = (characterCount / 1000) * ratePer1k;
-      break;
+      const req = request as AudioSpeechRequest;
+      if (cost.kind !== "per_1k_chars") throw new Error(`Voice model ${model.slug} needs a per-character cost basis.`);
+      const characters = req.input.length;
+      return { usd: (characters / 1000) * cost.usd, units: { characters } };
     }
-
     case "video": {
-      durationSeconds = Math.max(1, Math.min(Number(body?.duration) || 5, model.limits.maxDurationSeconds || 10));
-      const ratePerSec = model.rates?.unitRateUsd ?? 0.05;
-      rawCost = durationSeconds * ratePerSec;
-      break;
+      const req = request as VideoGenerationRequest;
+      if (cost.kind !== "per_second") throw new Error(`Video model ${model.slug} needs a per-second cost basis.`);
+      const seconds = req.duration ?? model.video?.durations[0] ?? 5;
+      return { usd: seconds * cost.usd, units: { seconds } };
     }
   }
+}
 
-  // Parse model base price floor
-  const baseMatch = /^\$(\d+)(?:\.(\d+))?$/.exec(model.price);
-  const basePriceUsd = baseMatch ? parseFloat(`${baseMatch[1]}.${baseMatch[2] || "0"}`) : 0;
-
-  // Cost plus margin, clamped to model base price and global floor
-  const finalPrice = Math.max(config.priceMinFloor, basePriceUsd, rawCost * (1 + margin));
-  const microUsdc = Math.ceil(finalPrice * 1_000_000);
-  const formattedPrice = formatUsdcPrice(finalPrice);
-
+/** Price a validated request. Deterministic: the 402 challenge and the paid retry produce the same amount. */
+export function quoteRequest(model: ModelDefinition, request: ValidatedRequest): PriceQuote {
+  const { usd, units } = upstreamCostFor(model, request);
+  const price = priceFromCost(usd);
   return {
     modelSlug: model.slug,
     modality: model.modality,
-    estimatedInputTokens,
-    maxOutputTokens,
-    durationSeconds,
-    characterCount,
-    imageCount,
-    rawUpstreamCostUsd: parseFloat(rawCost.toFixed(6)),
-    marginPercent: Math.round(margin * 100),
-    finalPriceUsd: parseFloat(finalPrice.toFixed(6)),
-    formattedPrice,
-    microUsdc,
+    units,
+    costBasis: model.cost,
+    costSource: model.costSource,
+    upstreamCostUsd: Number(usd.toFixed(6)),
+    marginPercent: Math.round(config.priceMargin * 100),
+    finalPriceUsd: price.usd,
+    formattedPrice: microToUsdString(price.microUsdc),
+    microUsdc: price.microUsdc,
   };
+}
+
+/** The price of a small, typical request; shown in catalogs as a "from" price. */
+export function referenceRequest(model: ModelDefinition): ValidatedRequest {
+  switch (model.modality) {
+    case "chat":
+      return { messages: [{ role: "user", content: "Hello! Summarize Algorand in one sentence." }], max_tokens: 256 };
+    case "image":
+      return { prompt: "A lighthouse at dawn", n: 1 };
+    case "voice":
+      return { input: "Welcome to Moltworld, pay-per-request AI on Algorand." };
+    case "video":
+      return { prompt: "Waves at sunset", duration: model.video?.durations[0] ?? 5 };
+  }
+}
+
+/**
+ * Price for what a chat call actually consumed. Used to rebate the unused part of
+ * the max_tokens budget the caller was charged up front.
+ */
+export function actualChatPriceMicro(
+  model: ModelDefinition,
+  usage: { prompt_tokens: number; completion_tokens: number },
+  reportedUpstreamCostUsd?: number
+): number {
+  if (model.cost.kind !== "tokens") throw new Error("actualChatPriceMicro needs a token cost basis.");
+  const computed =
+    (usage.prompt_tokens * model.cost.inputPerMillionUsd + usage.completion_tokens * model.cost.outputPerMillionUsd) /
+    1_000_000;
+  // When the upstream reports its own billed cost (OpenRouter does), trust the higher of the two.
+  const usd = Math.max(computed, reportedUpstreamCostUsd ?? 0);
+  return priceFromCost(usd).microUsdc;
 }

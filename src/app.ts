@@ -5,6 +5,7 @@ import { createX402Server } from "./x402/server.js";
 import {
   requestIdMiddleware,
   securityHeadersMiddleware,
+  rateLimit,
   rateLimitFreeRoutesMiddleware,
   structuredLogger,
   safeErrorHandler,
@@ -14,174 +15,153 @@ import { handleLlmsTxt, handleX402Discovery } from "./routes/metadata.js";
 import { getAgentCard, handleA2a } from "./routes/a2a.js";
 import { createMcpRoute } from "./routes/mcp.js";
 import {
-  handleHealth,
-  handleListModels,
-  handleChatCompletion,
-  handleImageGeneration,
-  handleAudioSpeech,
-  handleVideoGeneration,
-  handleQuote,
-  handleStats,
   handleGetJob,
   handleGetReceipt,
-  handleReceiptPublicKey,
-  setGatewayReady,
-} from "./routes/api.js";
+  handleHealth,
+  handleJobContent,
+  handleListModels,
+  handleQuote,
+  handleReceiptKeys,
+  handleStats,
+  recordCatalogSync,
+} from "./routes/public.js";
+import { handleModelRequest } from "./routes/models.js";
+import { handleMandateDraft, handleMandateGet, handleMandateList, handleMandateRegister, handleMandateRevoke } from "./routes/mandates.js";
+import {
+  handleCreatorEarnings,
+  handleListingCreate,
+  handleListingGet,
+  handleMarketCall,
+  handleMarketList,
+  prepareMarketRequest,
+} from "./routes/market.js";
+import {
+  handleOpsListingReview,
+  handleOpsListings,
+  handleOpsPayouts,
+  handleOpsRefundRetry,
+  handleOpsRefunds,
+  requireAdmin,
+} from "./routes/ops.js";
+import { commerceMiddleware, prepareModelRequest, setGatewayReady } from "./payments/gateway.js";
 import { defaultModelRegistry } from "./models/registry.js";
+import { syncCatalog } from "./models/sync.js";
+import { getDatabase } from "./ledger/db.js";
 import { getLogoBytes, getFaviconBytes, getFavicon32Bytes } from "./assets/images.js";
 
-export function createApp(): {
-  app: Hono;
-  init: () => Promise<void>;
-} {
+function png(bytes: Uint8Array, type = "image/png") {
+  return () =>
+    new Response(bytes as unknown as BodyInit, {
+      headers: { "Content-Type": type, "Cache-Control": "public, max-age=31536000, immutable" },
+    });
+}
+
+export function createApp(): { app: Hono; init: () => Promise<void> } {
   const app = new Hono();
   const { server, routes } = createX402Server();
   const handleMcp = createMcpRoute(async (request) => app.fetch(request));
 
-  // Global Error Handler
   app.onError(safeErrorHandler);
-
-  // Request ID & Logger
   app.use("*", requestIdMiddleware);
   app.use("*", structuredLogger);
   app.use("*", securityHeadersMiddleware);
-
-  // CORS Configuration
   app.use(
     "*",
     cors({
       origin: "*",
       allowMethods: ["GET", "POST", "OPTIONS"],
-      allowHeaders: [
-        "Content-Type",
-        "Authorization",
-        "Payment-Signature",
-        "Payment-Required",
-        "x-request-id",
-        "idempotency-key",
-      ],
+      allowHeaders: ["Content-Type", "Authorization", "Payment-Signature", "X-Payment", "x-request-id"],
       exposeHeaders: [
         "Payment-Required",
         "Payment-Response",
         "Moltworld-Receipt",
+        "Moltworld-Request-Id",
+        "Moltworld-Quote",
+        "Moltworld-Replay",
+        "Moltworld-Refund",
         "x-request-id",
-        "Content-Type",
       ],
       maxAge: 86400,
     })
   );
 
-  // Rate Limiting for Free / Unpaid Endpoints
-  app.use("/", rateLimitFreeRoutesMiddleware);
-  app.use("/health", rateLimitFreeRoutesMiddleware);
-  app.use("/v1/models", rateLimitFreeRoutesMiddleware);
-  app.use("/v1/stats", rateLimitFreeRoutesMiddleware);
-  app.use("/v1/quote", rateLimitFreeRoutesMiddleware);
-  app.use("/v1/jobs/*", rateLimitFreeRoutesMiddleware);
-  app.use("/v1/receipts/*", rateLimitFreeRoutesMiddleware);
-  app.use("/.well-known/*", rateLimitFreeRoutesMiddleware);
-  app.use("/llms.txt", rateLimitFreeRoutesMiddleware);
-  app.use("/a2a", rateLimitFreeRoutesMiddleware);
-  app.use("/mcp", rateLimitFreeRoutesMiddleware);
-
-  // Free Public Endpoints
+  // Free endpoints
+  for (const path of ["/", "/health", "/v1/models", "/v1/quote", "/v1/stats", "/v1/jobs/*", "/v1/receipts/*", "/v1/mandates", "/v1/mandates/*", "/v1/market", "/v1/market/listings", "/v1/market/listings/*", "/v1/market/creators/*", "/.well-known/*", "/llms.txt", "/a2a", "/mcp"]) {
+    app.use(path, rateLimitFreeRoutesMiddleware);
+  }
   app.get("/", renderLandingPage);
   app.get("/health", handleHealth);
   app.get("/v1/models", handleListModels);
   app.post("/v1/quote", handleQuote);
   app.get("/v1/stats", handleStats);
   app.get("/v1/jobs/:id", handleGetJob);
+  app.get("/v1/jobs/:id/content", handleJobContent);
   app.get("/v1/receipts/:id", handleGetReceipt);
-  app.get("/.well-known/moltworld-receipts.json", handleReceiptPublicKey);
+  app.get("/.well-known/moltworld-receipts.json", handleReceiptKeys);
   app.get("/llms.txt", handleLlmsTxt);
   app.get("/.well-known/x402", handleX402Discovery);
   app.get("/.well-known/agent-card.json", (c) => c.json(getAgentCard(), 200, { "Cache-Control": "public, max-age=300" }));
   app.post("/a2a", (c) => handleA2a(c.req.raw));
   app.all("/mcp", (c) => handleMcp(c.req.raw));
 
-  // Static brand assets (Logo & Favicon)
-  app.get("/logo.png", () => {
-    return new Response(getLogoBytes() as unknown as BodyInit, {
-      headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  });
+  // Spending mandates
+  app.post("/v1/mandates/draft", handleMandateDraft);
+  app.post("/v1/mandates", handleMandateRegister);
+  app.get("/v1/mandates", handleMandateList);
+  app.get("/v1/mandates/:id", handleMandateGet);
+  app.post("/v1/mandates/:id/revoke", handleMandateRevoke);
 
-  app.get("/favicon.png", () => {
-    return new Response(getFaviconBytes() as unknown as BodyInit, {
-      headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  });
+  // Marketplace (free parts)
+  app.get("/v1/market", handleMarketList);
+  app.post("/v1/market/listings", handleListingCreate);
+  app.get("/v1/market/listings/:slug", handleListingGet);
+  app.get("/v1/market/creators/:address/earnings", handleCreatorEarnings);
 
-  app.get("/favicon-32.png", () => {
-    return new Response(getFavicon32Bytes() as unknown as BodyInit, {
-      headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  });
+  // Operator endpoints
+  app.use("/v1/ops/*", requireAdmin);
+  app.get("/v1/ops/refunds", handleOpsRefunds);
+  app.post("/v1/ops/refunds/:id/retry", handleOpsRefundRetry);
+  app.get("/v1/ops/payouts", handleOpsPayouts);
+  app.get("/v1/ops/listings", handleOpsListings);
+  app.post("/v1/ops/listings/:id/review", handleOpsListingReview);
 
-  app.get("/favicon.ico", () => {
-    return new Response(getFavicon32Bytes() as unknown as BodyInit, {
-      headers: {
-        "Content-Type": "image/x-icon",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  });
+  app.get("/logo.png", png(getLogoBytes()));
+  app.get("/apple-touch-icon.png", png(getLogoBytes()));
+  app.get("/favicon.png", png(getFaviconBytes()));
+  app.get("/favicon-32.png", png(getFavicon32Bytes()));
+  app.get("/favicon.ico", png(getFavicon32Bytes(), "image/x-icon"));
 
-  app.get("/apple-touch-icon.png", () => {
-    return new Response(getLogoBytes() as unknown as BodyInit, {
-      headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  });
-
-  // x402 Payment Middleware for Protected Routes
+  // Paid endpoints. Order matters: validate + quote before anything else, so no
+  // one pays for a request that cannot succeed; commerce wraps the payment step
+  // so it sees the facilitator's results and the final response.
+  app.use("/v1/models/:model/*", rateLimit("paid", 600));
+  app.use("/v1/market/:slug/call", rateLimit("paid", 600));
+  app.use("/v1/models/:model/*", prepareModelRequest);
+  app.use("/v1/market/:slug/call", prepareMarketRequest);
+  app.use("/v1/models/:model/*", commerceMiddleware);
+  app.use("/v1/market/:slug/call", commerceMiddleware);
   app.use(paymentMiddleware(routes, server, undefined, undefined, false));
-
-  // Explicit Protected Model Routes
-  const models = defaultModelRegistry.getEnabledModels();
-  for (const model of models) {
-    switch (model.modality) {
-      case "chat":
-        app.post(`/v1/models/${model.slug}/chat/completions`, handleChatCompletion);
-        break;
-      case "image":
-        app.post(`/v1/models/${model.slug}/images/generations`, handleImageGeneration);
-        break;
-      case "voice":
-        app.post(`/v1/models/${model.slug}/audio/speech`, handleAudioSpeech);
-        break;
-      case "video":
-        app.post(`/v1/models/${model.slug}/videos/generations`, handleVideoGeneration);
-        break;
-    }
-  }
-
-  // Generic Parameterized Routes
-  app.post("/v1/models/:model/chat/completions", handleChatCompletion);
-  app.post("/v1/models/:model/images/generations", handleImageGeneration);
-  app.post("/v1/models/:model/audio/speech", handleAudioSpeech);
-  app.post("/v1/models/:model/videos/generations", handleVideoGeneration);
+  app.post("/v1/models/:model/chat/completions", handleModelRequest);
+  app.post("/v1/models/:model/images/generations", handleModelRequest);
+  app.post("/v1/models/:model/audio/speech", handleModelRequest);
+  app.post("/v1/models/:model/videos/generations", handleModelRequest);
+  app.post("/v1/market/:slug/call", handleMarketCall);
 
   const init = async () => {
+    await getDatabase();
+    const report = await syncCatalog(defaultModelRegistry);
+    recordCatalogSync(report);
+    if (Object.keys(report.unverified).length) {
+      console.warn("Models withheld (upstream not verified):", report.unverified);
+    }
     try {
       await server.initialize();
       setGatewayReady(true);
-      console.log("x402 Facilitator initialized successfully. Gateway is READY.");
+      console.log("x402 facilitator initialized. Gateway is READY.");
     } catch (err: any) {
       const msg = err?.message || String(err);
       setGatewayReady(false, msg);
-      console.error("CRITICAL: x402 Facilitator initialization failed. Gateway failing closed:", msg);
+      console.error("CRITICAL: x402 facilitator initialization failed. Gateway failing closed:", msg);
       throw err;
     }
   };

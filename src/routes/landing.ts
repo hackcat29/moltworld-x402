@@ -1,6 +1,7 @@
 import { Context } from "hono";
 import { config } from "../config.js";
 import { defaultModelRegistry, getModelEndpoint } from "../models/registry.js";
+import { quoteRequest, referenceRequest } from "../pricing/index.js";
 
 export function renderLandingPage(c: Context): Response {
   const models = defaultModelRegistry.getEnabledModels();
@@ -1103,7 +1104,7 @@ export function renderLandingPage(c: Context): Response {
             <div>
               <div class="model-header">
                 <span class="model-name">${m.displayName}</span>
-                <span class="model-price">${m.price}</span>
+                <span class="model-price">from ${quoteRequest(m, referenceRequest(m)).formattedPrice}</span>
               </div>
               <div class="model-meta">
                 <span class="modality-badge badge-${m.modality}">${m.modality}</span>

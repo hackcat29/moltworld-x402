@@ -1,15 +1,6 @@
-import {
-  HTTPFacilitatorClient,
-  x402ResourceServer,
-  RouteConfig,
-  RoutesConfig,
-} from "@x402/core/server";
+import { HTTPFacilitatorClient, x402ResourceServer, RouteConfig, RoutesConfig } from "@x402/core/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
-import {
-  bazaarResourceServerExtension,
-  declareDiscoveryExtension,
-} from "@x402-avm/extensions";
-import algosdk from "algosdk";
+import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402-avm/extensions";
 import {
   config,
   ALGORAND_TESTNET_FACILITATOR_CAIP2,
@@ -18,103 +9,31 @@ import {
   ALGORAND_MAINNET_CANONICAL_CAIP2,
 } from "../config.js";
 import { ModelRegistry, defaultModelRegistry, getModelEndpoint, getModelDiscoveryDescription, ModelDefinition } from "../models/registry.js";
-import { calculateRequestQuote } from "../pricing/index.js";
-import { redisStore } from "../store/redis.js";
-import { dbStore } from "../store/db.js";
-import { refundService } from "../refunds/index.js";
+import { paymentFlowFor, priceFromState, registerPaymentHooks } from "../payments/gateway.js";
 
-function extractPayerFromPayload(payload: any): string | null {
-  try {
-    const rawPayload = payload?.payload;
-    if (rawPayload?.paymentGroup && Array.isArray(rawPayload.paymentGroup)) {
-      const idx = rawPayload.paymentIndex ?? 0;
-      const b64 = rawPayload.paymentGroup[idx];
-      if (b64) {
-        const decoded = algosdk.decodeSignedTransaction(Buffer.from(b64, "base64"));
-        return algosdk.encodeAddress(decoded.txn.sender.publicKey);
-      }
-    }
-  } catch {}
-  return null;
-}
-
-export function createX402Server(): {
+export function createX402Server(registry: ModelRegistry = defaultModelRegistry): {
   server: x402ResourceServer;
   routes: RoutesConfig;
 } {
-  const facilitatorClient = new HTTPFacilitatorClient({
-    url: config.facilitatorUrl,
-  });
-
+  const facilitatorClient = new HTTPFacilitatorClient({ url: config.facilitatorUrl });
   const server = new x402ResourceServer(facilitatorClient);
 
-  // Register ExactAvmScheme across both facilitator full-hash formats and canonical 32-char CAIP-2 formats
+  // The facilitator advertises full-genesis-hash CAIP-2 ids; @x402/avm uses truncated ones.
   server.register(ALGORAND_TESTNET_FACILITATOR_CAIP2, new ExactAvmScheme());
   server.register(ALGORAND_TESTNET_CANONICAL_CAIP2, new ExactAvmScheme());
   server.register(ALGORAND_MAINNET_FACILITATOR_CAIP2, new ExactAvmScheme());
   server.register(ALGORAND_MAINNET_CANONICAL_CAIP2, new ExactAvmScheme());
-
-  // Register Bazaar resource-server discovery extension
   server.registerExtension(bazaarResourceServerExtension);
+  registerPaymentHooks(server);
 
-  // Lifecycle Hooks for Concurrency, Ledger & Automated Refunds
-  server.onBeforeVerify(async (context) => {
-    const payer = extractPayerFromPayload(context.paymentPayload);
-    const amountMicro = Number(context.requirements.amount || 0);
-    if (payer && amountMicro > 0) {
-      await redisStore.reservePayerFunds(payer, amountMicro);
-    }
-  });
-
-  server.onAfterSettle(async (context) => {
-    const payer = context.result.payer || extractPayerFromPayload(context.paymentPayload);
-    const amountMicro = Number(context.requirements.amount || 0);
-    if (payer && amountMicro > 0) {
-      await redisStore.releasePayerFunds(payer, amountMicro);
-    }
-  });
-
-  server.onSettleFailure(async (context) => {
-    const payer = extractPayerFromPayload(context.paymentPayload);
-    const amountMicro = Number(context.requirements.amount || 0);
-    if (payer && amountMicro > 0) {
-      await redisStore.releasePayerFunds(payer, amountMicro);
-    }
-  });
-
-  server.onVerifiedPaymentCanceled(async (context) => {
-    const payer = extractPayerFromPayload(context.paymentPayload);
-    const amountMicro = Number(context.requirements.amount || 0);
-    if (payer && amountMicro > 0) {
-      await redisStore.releasePayerFunds(payer, amountMicro);
-    }
-
-    // Automated Refund for Upfront-Settled Requests that failed in resource handler
-    if (context.settledPhases && context.settledPhases.includes("before-handler") && payer && amountMicro > 0) {
-      console.warn(`[Automated Refund] Upfront settlement cancelled (${context.reason}). Triggering refund to ${payer}...`);
-      await refundService.processRefund({
-        requestId: `cancel-${Date.now()}`,
-        payerAddress: payer,
-        amountMicroUsdc: amountMicro,
-        reason: `Upfront payment settled but request handler aborted (${context.reason})`,
-      });
-    }
-  });
-
-  const routes = buildX402Routes(defaultModelRegistry);
-
-  return { server, routes };
+  return { server, routes: buildX402Routes(registry) };
 }
 
-function buildDiscoveryExtensionForModel(model: ModelDefinition) {
+function discoveryFor(model: ModelDefinition) {
   switch (model.modality) {
     case "chat":
       return declareDiscoveryExtension({
-        input: {
-          messages: [{ role: "user", content: "Explain Algorand in simple terms." }],
-          temperature: 0.7,
-          max_tokens: 500,
-        },
+        input: { messages: [{ role: "user", content: "Explain Algorand in one paragraph." }], max_tokens: 300 },
         inputSchema: {
           type: "object",
           properties: {
@@ -122,172 +41,115 @@ function buildDiscoveryExtensionForModel(model: ModelDefinition) {
               type: "array",
               items: {
                 type: "object",
-                properties: {
-                  role: { type: "string", enum: ["system", "user", "assistant"] },
-                  content: { type: "string" },
-                },
+                properties: { role: { type: "string", enum: ["system", "user", "assistant"] }, content: { type: "string" } },
                 required: ["role", "content"],
               },
             },
             temperature: { type: "number", minimum: 0, maximum: 2 },
-            max_tokens: { type: "integer", minimum: 1, maximum: model.limits.maxOutputTokens || 2048 },
+            max_tokens: { type: "integer", minimum: 1, maximum: model.limits.maxOutputTokens ?? 2048 },
           },
           required: ["messages"],
         },
         bodyType: "json",
         output: {
           example: {
-            id: `chatcmpl-${model.slug}-demo`,
             object: "chat.completion",
-            created: 1727096174,
             model: model.slug,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "Algorand is a high-speed, secure, and decentralized pure proof-of-stake blockchain...",
-                },
-                finish_reason: "stop",
-              },
-            ],
-            usage: { prompt_tokens: 15, completion_tokens: 42, total_tokens: 57 },
+            choices: [{ index: 0, message: { role: "assistant", content: "Algorand is a proof-of-stake blockchain..." }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 14, completion_tokens: 120, total_tokens: 134 },
+            moltworld: { request_id: "req_...", receipt_url: `${config.publicDomain}/v1/receipts/req_...` },
           },
         },
       });
-
     case "image":
       return declareDiscoveryExtension({
-        input: {
-          prompt: "Futuristic city with autonomous drones and neon lights at dusk",
-          n: 1,
-          size: "1024x1024",
-          response_format: "url",
-        },
+        input: { prompt: "A lighthouse on a cliff at dawn, watercolor", n: 1, size: model.image?.sizes[0] ?? "1024x1024" },
         inputSchema: {
           type: "object",
           properties: {
-            prompt: { type: "string", maxLength: model.limits.maxPromptChars || 4000 },
-            n: { type: "integer", minimum: 1, maximum: 4 },
-            size: { type: "string", enum: ["1024x1024", "1024x1792", "1792x1024", "512x512"] },
-            response_format: { type: "string", enum: ["url", "b64_json"] },
+            prompt: { type: "string", maxLength: model.limits.maxPromptChars ?? 3000 },
+            n: { type: "integer", minimum: 1, maximum: model.limits.maxImages ?? 1 },
+            size: { type: "string", enum: model.image?.sizes ?? ["1024x1024"] },
           },
           required: ["prompt"],
         },
         bodyType: "json",
-        output: {
-          example: {
-            created: 1727096174,
-            data: [
-              {
-                url: `https://images.moltworld.xyz/generated/${model.slug}/demo-sample.webp`,
-                revised_prompt: "Futuristic neon cityscape with flying delivery drones",
-              },
-            ],
-          },
-        },
+        output: { example: { created: 1760000000, data: [{ url: "https://..." }], moltworld: { request_id: "req_..." } } },
       });
-
     case "voice":
       return declareDiscoveryExtension({
-        input: {
-          input: "Welcome to Moltworld, powered by Algorand x402 payments.",
-          voice: "alloy",
-          response_format: "mp3",
-          speed: 1.0,
-        },
+        input: { input: "Welcome to Moltworld.", ...(model.voices ? { voice: model.voices[0] } : {}) },
         inputSchema: {
           type: "object",
           properties: {
-            input: { type: "string", maxLength: model.limits.maxPromptChars || 4096 },
-            voice: { type: "string" },
-            response_format: { type: "string", enum: ["mp3", "opus", "aac", "flac", "wav"] },
-            speed: { type: "number", minimum: 0.25, maximum: 4.0 },
+            input: { type: "string", maxLength: model.limits.maxPromptChars ?? 2000 },
+            voice: model.voices ? { type: "string", enum: model.voices } : { type: "string" },
+            response_format: { type: "string", enum: model.audioFormats ?? ["mp3", "wav", "opus", "aac", "flac"] },
           },
           required: ["input"],
         },
         bodyType: "json",
         output: {
-          example: {
-            id: `audio-${model.slug}-demo`,
-            object: "audio.speech",
-            created: 1727096174,
-            model: model.slug,
-            audio_url: `https://audio.moltworld.xyz/speech/${model.slug}/sample.mp3`,
-            format: "mp3",
-            duration_seconds: 3.4,
-            character_count: 58,
-          },
+          example: { object: "audio.speech", model: model.slug, format: model.audioFormats?.[0] ?? "mp3", audio_b64: "<base64>", character_count: 21 },
         },
       });
-
     case "video":
       return declareDiscoveryExtension({
-        input: {
-          prompt: "Cinematic drone shot soaring over crystalline ocean waves at golden hour sunset",
-          duration: 5,
-          aspect_ratio: "16:9",
-        },
+        input: { prompt: "Slow aerial shot over ocean waves at sunset", duration: model.video?.durations[0] ?? 5 },
         inputSchema: {
           type: "object",
           properties: {
-            prompt: { type: "string", maxLength: model.limits.maxPromptChars || 2500 },
-            duration: { type: "integer", minimum: 1, maximum: model.limits.maxDurationSeconds || 10 },
-            aspect_ratio: { type: "string", enum: ["16:9", "9:16", "1:1"] },
+            prompt: { type: "string", maxLength: model.limits.maxPromptChars ?? 2500 },
+            duration: { type: "integer", enum: model.video?.durations ?? [5] },
+            aspect_ratio: { type: "string", enum: model.video?.aspectRatios ?? ["16:9"] },
           },
           required: ["prompt"],
         },
         bodyType: "json",
         output: {
-          example: {
-            id: `video-${model.slug}-demo`,
-            object: "video.generation",
-            created: 1727096174,
-            model: model.slug,
-            status: "completed",
-            video_url: `https://video.moltworld.xyz/generated/${model.slug}/sample.mp4`,
-            duration_seconds: 5,
-            aspect_ratio: "16:9",
-          },
+          example: { id: "job_...", object: "video.job", status: "queued", poll_url: `${config.publicDomain}/v1/jobs/job_...` },
         },
       });
   }
 }
 
+/**
+ * One x402 route per catalog model (each with its own Bazaar schema) plus the
+ * marketplace route. Routes exist for every model; whether a model is sellable is
+ * decided per request before payment, so catalog sync can switch models on and off.
+ */
 export function buildX402Routes(registry: ModelRegistry): RoutesConfig {
   const routes: Record<string, RouteConfig> = {};
-  const models = registry.getEnabledModels();
-
-  for (const model of models) {
-    const routeKey = `POST ${getModelEndpoint(model)}`;
-    const isUpfront = model.modality === "image" || model.modality === "video";
-
-    routes[routeKey] = {
+  for (const model of registry.getAllModels()) {
+    const flow = paymentFlowFor(model);
+    routes[`POST ${getModelEndpoint(model)}`] = {
       accepts: {
         scheme: "exact",
-        price: async (ctx) => {
-          let body: any;
-          if (ctx.adapter.getBody) {
-            body = await ctx.adapter.getBody();
-          }
-          const quote = calculateRequestQuote(model, body);
-          return quote.formattedPrice;
-        },
+        price: priceFromState,
         network: config.networkCaip2,
         payTo: config.payToAddress,
-        extra: {
-          asset: config.usdcAsaId,
-          tag: "x402-global-challenge",
-          ...(isUpfront ? { paymentFlow: "upfront" } : {}),
-        },
+        maxTimeoutSeconds: model.modality === "chat" ? 120 : 300,
+        extra: { tag: "x402-global-challenge", ...(flow === "upfront" ? { paymentFlow: "upfront" } : {}) },
       },
       description: getModelDiscoveryDescription(model),
       mimeType: "application/json",
-      extensions: {
-        ...buildDiscoveryExtensionForModel(model),
-      },
+      serviceName: "Moltworld",
+      tags: model.tags,
+      extensions: { ...discoveryFor(model) },
     };
   }
-
+  routes["POST /v1/market/:slug/call"] = {
+    accepts: {
+      scheme: "exact",
+      price: priceFromState,
+      network: config.networkCaip2,
+      payTo: config.payToAddress,
+      maxTimeoutSeconds: 120,
+      extra: { tag: "x402-global-challenge" },
+    },
+    description: "Call a creator API listed on the Moltworld marketplace. Price is set by the listing.",
+    mimeType: "application/json",
+    serviceName: "Moltworld Market",
+  };
   return routes;
 }

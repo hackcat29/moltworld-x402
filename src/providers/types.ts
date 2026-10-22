@@ -1,7 +1,9 @@
+import type { ModelDefinition } from "../models/registry.js";
+
 export type ModelModality = "chat" | "image" | "voice" | "video";
 
 // ----------------------------------------------------
-// Chat Types (OpenAI-compatible)
+// Chat (OpenAI-compatible)
 // ----------------------------------------------------
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -12,7 +14,6 @@ export interface ChatCompletionRequest {
   messages: ChatMessage[];
   temperature?: number;
   max_tokens?: number;
-  stream?: boolean;
 }
 
 export interface ChatCompletionChoice {
@@ -34,21 +35,15 @@ export interface ChatCompletionResponse {
   model: string;
   choices: ChatCompletionChoice[];
   usage?: ChatCompletionUsage;
-  upstreamProvider?: string;
-  upstreamModel?: string;
-  upstreamCostUsd?: number;
 }
 
 // ----------------------------------------------------
-// Image Types (OpenAI-compatible)
+// Image
 // ----------------------------------------------------
 export interface ImageGenerationRequest {
   prompt: string;
   n?: number;
-  size?: string; // e.g. "1024x1024", "1024x1792", "1792x1024"
-  response_format?: "url" | "b64_json";
-  quality?: "standard" | "hd";
-  style?: "vivid" | "natural";
+  size?: string;
 }
 
 export interface GeneratedImageItem {
@@ -60,88 +55,107 @@ export interface GeneratedImageItem {
 export interface ImageGenerationResponse {
   created: number;
   data: GeneratedImageItem[];
-  upstreamProvider?: string;
-  upstreamModel?: string;
-  upstreamCostUsd?: number;
 }
 
 // ----------------------------------------------------
-// Voice / Audio Types (OpenAI-compatible)
+// Voice
 // ----------------------------------------------------
 export interface AudioSpeechRequest {
   input: string;
-  voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" | string;
-  response_format?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
+  voice?: string;
+  response_format?: "mp3" | "opus" | "aac" | "flac" | "wav";
   speed?: number;
 }
 
 export interface AudioSpeechResponse {
-  id: string;
   object: "audio.speech";
   created: number;
   model: string;
-  audio_url: string;
-  audio_b64?: string;
   format: string;
-  duration_seconds: number;
+  mime_type: string;
+  audio_b64: string;
   character_count: number;
-  upstreamProvider?: string;
-  upstreamModel?: string;
-  upstreamCostUsd?: number;
 }
 
 // ----------------------------------------------------
-// Video Generation Types
+// Video (async jobs)
 // ----------------------------------------------------
 export interface VideoGenerationRequest {
   prompt: string;
-  duration?: number; // e.g. 5 or 10 seconds
-  aspect_ratio?: "16:9" | "9:16" | "1:1";
-  quality?: "standard" | "hd";
+  duration?: number;
+  aspect_ratio?: string;
 }
 
-export interface VideoGenerationResponse {
-  id: string;
-  object: "video.generation";
-  created: number;
-  model: string;
-  status: "completed" | "processing";
-  video_url: string;
-  duration_seconds: number;
-  aspect_ratio: string;
-  upstreamProvider?: string;
-  upstreamModel?: string;
+export interface VideoJobSubmission {
+  upstreamJobId: string;
+}
+
+export type VideoJobStatus =
+  | { state: "queued" | "processing" }
+  | { state: "completed"; videoUrl?: string; requiresProxy?: boolean }
+  | { state: "failed"; error: string };
+
+// ----------------------------------------------------
+// Provider contract
+// ----------------------------------------------------
+
+/** What actually happened upstream, recorded on the ledger and in the receipt. */
+export interface UpstreamResult<T> {
+  body: T;
+  upstreamProvider: string;
+  upstreamModel: string;
   upstreamCostUsd?: number;
-  jobId?: string;
+  usage?: ChatCompletionUsage;
 }
 
-// ----------------------------------------------------
-// Universal Multimodal AI Provider Interface
-// ----------------------------------------------------
 export interface AIProvider {
   readonly id: string;
+  chatComplete?(model: ModelDefinition, request: ChatCompletionRequest): Promise<UpstreamResult<ChatCompletionResponse>>;
+  generateImage?(model: ModelDefinition, request: ImageGenerationRequest): Promise<UpstreamResult<ImageGenerationResponse>>;
+  generateSpeech?(model: ModelDefinition, request: AudioSpeechRequest): Promise<UpstreamResult<AudioSpeechResponse>>;
+  submitVideo?(model: ModelDefinition, request: VideoGenerationRequest): Promise<VideoJobSubmission>;
+  getVideoStatus?(model: ModelDefinition, upstreamJobId: string): Promise<VideoJobStatus>;
+  /** For upstreams whose video bytes need our credentials (OpenAI). */
+  fetchVideoContent?(model: ModelDefinition, upstreamJobId: string): Promise<Response>;
+}
 
-  chatComplete(
-    modelIdentifier: string,
-    request: ChatCompletionRequest,
-    modelSlug: string
-  ): Promise<ChatCompletionResponse>;
+/** Thrown for any upstream failure. Never fabricate output in its place. */
+export class UpstreamError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = "UpstreamError";
+  }
+}
 
-  generateImage?(
-    modelIdentifier: string,
-    request: ImageGenerationRequest,
-    modelSlug: string
-  ): Promise<ImageGenerationResponse>;
+export function redact(text: string, secret?: string): string {
+  return secret ? text.split(secret).join("[REDACTED]") : text;
+}
 
-  generateSpeech?(
-    modelIdentifier: string,
-    request: AudioSpeechRequest,
-    modelSlug: string
-  ): Promise<AudioSpeechResponse>;
-
-  generateVideo?(
-    modelIdentifier: string,
-    request: VideoGenerationRequest,
-    modelSlug: string
-  ): Promise<VideoGenerationResponse>;
+export async function upstreamFetch(
+  url: string,
+  init: RequestInit & { timeoutMs: number; secret?: string; label: string }
+): Promise<Response> {
+  const { timeoutMs, secret, label, ...rest } = init;
+  let res: Response;
+  try {
+    res = await fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err: any) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      throw new UpstreamError(`${label} timed out after ${timeoutMs}ms.`);
+    }
+    throw new UpstreamError(`${label} request failed: ${redact(String(err?.message ?? err), secret)}`);
+  }
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const text = await res.text();
+      const parsed = JSON.parse(text);
+      const d = parsed?.error?.message ?? parsed?.detail ?? parsed?.message ?? text;
+      detail = (typeof d === "string" ? d : JSON.stringify(d)).slice(0, 500);
+    } catch {
+      // keep status-only detail
+    }
+    throw new UpstreamError(`${label} error: ${redact(detail, secret)}`, res.status);
+  }
+  return res;
 }
