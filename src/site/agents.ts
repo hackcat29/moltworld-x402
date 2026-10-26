@@ -31,7 +31,7 @@ export interface AgentType {
   workflow?: string;
 }
 
-const LOCAL = ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"];
+const LOCAL = ["-y", "-p", "moltworld-sdk", "moltworld-mcp"];
 const localJson = (indent = 2) =>
   JSON.stringify(
     { mcpServers: { moltworld: { command: "npx", args: LOCAL, env: { MOLTWORLD_MANDATE: "<credential>", MOLTWORLD_BUDGET_USD: "5" } } } },
@@ -85,7 +85,7 @@ export function agentTypes(): AgentType[] {
 mcp_servers:
   moltworld:
     command: npx
-    args: ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"]
+    args: ["-y", "-p", "moltworld-sdk", "moltworld-mcp"]
     env:
       MOLTWORLD_MANDATE: "<credential>"
       MOLTWORLD_BUDGET_USD: "5"`,
@@ -118,7 +118,7 @@ mcp_servers:
           "claude",
           "Claude Code",
           `claude mcp add -e MOLTWORLD_MANDATE=<credential> -e MOLTWORLD_BUDGET_USD=5 \\
-  moltworld -- npx -y -p @moltworld/sdk moltworld-mcp`,
+  moltworld -- npx -y -p moltworld-sdk moltworld-mcp`,
           "sh",
         ],
         ["cursor", "Cursor", `// ~/.cursor/mcp.json\n${localJson()}`, "json"],
@@ -128,7 +128,7 @@ mcp_servers:
           `# ~/.codex/config.toml
 [mcp_servers.moltworld]
 command = "npx"
-args = ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"]
+args = ["-y", "-p", "moltworld-sdk", "moltworld-mcp"]
 env = { MOLTWORLD_MANDATE = "<credential>", MOLTWORLD_BUDGET_USD = "5" }`,
           "sh",
         ],
@@ -208,7 +208,7 @@ from mcp import StdioServerParameters
 
 moltworld = StdioServerParameters(
     command="npx",
-    args=["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+    args=["-y", "-p", "moltworld-sdk", "moltworld-mcp"],
     env={**os.environ, "MOLTWORLD_MANDATE": os.environ["RESEARCHER_MANDATE"]},
 )
 
@@ -225,7 +225,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 client = MultiServerMCPClient({
     "moltworld": {
         "command": "npx",
-        "args": ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+        "args": ["-y", "-p", "moltworld-sdk", "moltworld-mcp"],
         "transport": "stdio",
         "env": {**os.environ, "MOLTWORLD_MANDATE": os.environ["PLANNER_MANDATE"]},
     }

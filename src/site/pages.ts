@@ -127,7 +127,7 @@ function snippets(model = "gpt-4o") {
   "mcpServers": {
     "moltworld": {
       "command": "npx",
-      "args": ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+      "args": ["-y", "-p", "moltworld-sdk", "moltworld-mcp"],
       "env": { "MOLTWORLD_MANDATE": "<credential>", "MOLTWORLD_BUDGET_USD": "5" }
     }
   }
@@ -136,11 +136,11 @@ function snippets(model = "gpt-4o") {
 // The agent now has moltworld_chat, moltworld_image, moltworld_speech,
 // moltworld_video and moltworld_quote, and pays within the mandate.`,
     claude: `claude mcp add -e MOLTWORLD_MANDATE=<credential> -e MOLTWORLD_BUDGET_USD=5 \\
-  moltworld -- npx -y -p @moltworld/sdk moltworld-mcp
+  moltworld -- npx -y -p moltworld-sdk moltworld-mcp
 
 # Discovery and quotes only, no wallet:
 claude mcp add --transport http moltworld-remote ${origin}/mcp`,
-    ts: `import { MoltworldClient } from "@moltworld/sdk";
+    ts: `import { MoltworldClient } from "moltworld-sdk";
 
 const client = new MoltworldClient({
   mnemonic: process.env.ALGORAND_MNEMONIC,
@@ -265,7 +265,7 @@ function home(c: Context) {
           <h1 data-split>Every AI model, <em>paid per request.</em></h1>
           <div class="cta-row" data-reveal style="--d:4">
             ${btn("/playground", "Open Playground")}
-            <span class="cmd"><b>npm i @moltworld/sdk</b><button type="button" class="icon-btn" data-copy="npm i @moltworld/sdk" aria-label="Copy install command">${icon("copy", 15)}</button></span>
+            <span class="cmd"><b>npm i moltworld-sdk</b><button type="button" class="icon-btn" data-copy="npm i moltworld-sdk" aria-label="Copy install command">${icon("copy", 15)}</button></span>
           </div>
         </div>
         <div class="hero-visual" data-clip>
@@ -545,7 +545,7 @@ function mandates(c: Context) {
             "key",
             "1. Agent key",
             `# On the agent's machine. The key stays there; only the address is shared.
-npx -y -p @moltworld/sdk moltworld-mcp keygen
+npx -y -p moltworld-sdk moltworld-mcp keygen
 # -> AGENTADDRESS...   (saved to ~/.moltworld/agent.key)`,
             "sh",
           ],
@@ -553,7 +553,7 @@ npx -y -p @moltworld/sdk moltworld-mcp keygen
             "owner",
             "2. Owner",
             `import algosdk from "algosdk";
-import { createMandate } from "@moltworld/sdk";
+import { createMandate } from "moltworld-sdk";
 
 const owner = algosdk.mnemonicToSecretKey(process.env.OWNER_MNEMONIC);
 // The SDK checks the program against these limits before you sign it.
@@ -569,7 +569,7 @@ const { mandateId, credential } = await createMandate("${origin}", owner, {
           [
             "agent",
             "3. Agent",
-            `import { MoltworldClient } from "@moltworld/sdk";
+            `import { MoltworldClient } from "moltworld-sdk";
 
 // The credential alone can't pay: the agent's own key co-signs every payment.
 const agent = new MoltworldClient({ mandate: credential, agentKey: process.env.AGENT_KEY });
@@ -578,7 +578,7 @@ await agent.chat("gpt-4o", {
 });`,
             "ts",
           ],
-          ["revoke", "Revoke", `import { revokeMandate } from "@moltworld/sdk";
+          ["revoke", "Revoke", `import { revokeMandate } from "moltworld-sdk";
 
 // Stops all spending: the program can only pay Moltworld.
 await revokeMandate("${origin}", owner, mandateId);`, "ts"],
@@ -724,7 +724,7 @@ function developers(c: Context) {
     })}
     ${sec(`
       ${secHead("First call <em>in minutes.</em>")}
-      ${stepsList(["Fund a wallet with USDC.", "<code>npm i @moltworld/sdk</code>", "Set a per-request cap.", "Call any model."])}
+      ${stepsList(["Fund a wallet with USDC.", "<code>npm i moltworld-sdk</code>", "Set a per-request cap.", "Call any model."])}
     `)}
     ${sec(`
       ${secHead("Tools.")}
@@ -811,7 +811,7 @@ function solutionsAgents(c: Context) {
 mcp_servers:
   moltworld:
     command: npx
-    args: ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"]
+    args: ["-y", "-p", "moltworld-sdk", "moltworld-mcp"]
     env:
       MOLTWORLD_MANDATE: "<credential from createMandate()>"
       MOLTWORLD_MAX_PER_REQUEST_USD: "0.25"
@@ -827,7 +827,7 @@ mcp_servers:
     "servers": {
       "moltworld": {
         "command": "npx",
-        "args": ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+        "args": ["-y", "-p", "moltworld-sdk", "moltworld-mcp"],
         "env": {
           "MOLTWORLD_MANDATE": "<credential from createMandate()>",
           "MOLTWORLD_MAX_PER_REQUEST_USD": "0.25",
@@ -847,7 +847,7 @@ mcp_servers:
 
 # Paid calls with a mandate:
 claude mcp add -e MOLTWORLD_MANDATE=<credential> -e MOLTWORLD_BUDGET_USD=5 \\
-  moltworld-wallet -- npx -y -p @moltworld/sdk moltworld-mcp`,
+  moltworld-wallet -- npx -y -p moltworld-sdk moltworld-mcp`,
           "sh",
         ],
         [
@@ -868,7 +868,7 @@ POST ${origin}/a2a`,
     "moltworld": { "type": "http", "url": "${origin}/mcp" },
     "moltworld-wallet": {
       "command": "npx",
-      "args": ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+      "args": ["-y", "-p", "moltworld-sdk", "moltworld-mcp"],
       "env": { "MOLTWORLD_MANDATE": "<credential>", "MOLTWORLD_BUDGET_USD": "5" }
     }
   }
@@ -973,7 +973,7 @@ function useCaseDetails(): Record<string, UseCaseDetail> {
         "The agent adds Moltworld as an MCP server and pays as it goes.",
         "Every call returns a receipt. Revoke the mandate any time.",
       ],
-      code: `// On the agent: npx -y -p @moltworld/sdk moltworld-mcp keygen  ->  agent address
+      code: `// On the agent: npx -y -p moltworld-sdk moltworld-mcp keygen  ->  agent address
 const { credential } = await createMandate("${origin}", owner, {
   agent: agentAddress, maxPerCallUsd: 0.25, dailyCapUsd: 5, validDays: 30,
 });
@@ -1061,7 +1061,7 @@ const AGENT_KEY_STEP: [string, string, string, string] = [
   "key",
   "Agent key",
   `# Once, where the agent runs. The key never leaves this machine.
-npx -y -p @moltworld/sdk moltworld-mcp keygen
+npx -y -p moltworld-sdk moltworld-mcp keygen
 # Prints the agent's address: give it to the wallet owner, who binds a mandate to it.
 # The resulting credential goes in MOLTWORLD_MANDATE below; it can't pay without this key.`,
   "sh",

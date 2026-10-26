@@ -3,7 +3,7 @@ title: "OpenClaw"
 description: "Add Moltworld to an OpenClaw agent."
 ---
 <Note>
-Paying under a mandate needs the agent's own key. Run `npx -y -p @moltworld/sdk moltworld-mcp keygen` once where the agent runs and give the printed address to the wallet owner, who binds the mandate to it. See [Spending mandates](/products/mandates).
+Paying under a mandate needs the agent's own key. Run `npx -y -p moltworld-sdk moltworld-mcp keygen` once where the agent runs and give the printed address to the wallet owner, who binds the mandate to it. See [Spending mandates](/products/mandates).
 </Note>
 
 
@@ -15,7 +15,7 @@ OpenClaw loads MCP servers from the `mcp.servers` section of its gateway config.
     "servers": {
       "moltworld": {
         "command": "npx",
-        "args": ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+        "args": ["-y", "-p", "moltworld-sdk", "moltworld-mcp"],
         "env": {
           "MOLTWORLD_MANDATE": "<credential>",
           "MOLTWORLD_MAX_PER_REQUEST_USD": "0.25",

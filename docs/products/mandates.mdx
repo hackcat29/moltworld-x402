@@ -48,7 +48,7 @@ A mandate's program can't remember earlier payments, so the daily cap lives in a
     Where the agent runs:
 
     ```bash
-    npx -y -p @moltworld/sdk moltworld-mcp keygen
+    npx -y -p moltworld-sdk moltworld-mcp keygen
     # prints the agent's address; the key is saved to ~/.moltworld/agent.key (mode 600)
     ```
 
@@ -59,7 +59,7 @@ A mandate's program can't remember earlier payments, so the daily cap lives in a
 
     ```ts
     import algosdk from "algosdk";
-    import { createMandate } from "@moltworld/sdk";
+    import { createMandate } from "moltworld-sdk";
 
     const owner = algosdk.mnemonicToSecretKey(process.env.OWNER_MNEMONIC!);
 
@@ -80,7 +80,7 @@ A mandate's program can't remember earlier payments, so the daily cap lives in a
     With MCP, set `MOLTWORLD_MANDATE` in the local server's environment; it reads the agent key from `~/.moltworld/agent.key`. See [MCP](/agents/mcp). In code:
 
     ```ts
-    import { MoltworldClient } from "@moltworld/sdk";
+    import { MoltworldClient } from "moltworld-sdk";
 
     const client = new MoltworldClient({ mandate: credential, agentKey: process.env.AGENT_KEY, budgetUsd: 5 });
     await client.chat("gpt-4o", { messages: [{ role: "user", content: "Summarize this page." }], max_tokens: 400 });
@@ -100,7 +100,7 @@ curl -s "https://moltworld.xyz/v1/mandates?owner=<address>"
 ```
 
 ```ts
-import { revokeMandate } from "@moltworld/sdk";
+import { revokeMandate } from "moltworld-sdk";
 await revokeMandate("https://moltworld.xyz", owner, mandateId);
 ```
 

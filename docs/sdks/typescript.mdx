@@ -1,10 +1,10 @@
 ---
 title: "TypeScript"
-description: "@moltworld/sdk for Node.js 20 and later."
+description: "moltworld-sdk for Node.js 20 and later."
 ---
 
 ```bash
-npm install @moltworld/sdk
+npm install moltworld-sdk
 ```
 
 The client pays 402 challenges for you, enforces your spend limits before signing, and verifies each receipt.
@@ -12,7 +12,7 @@ The client pays 402 challenges for you, enforces your spend limits before signin
 ## Create a client
 
 ```ts
-import { MoltworldClient } from "@moltworld/sdk";
+import { MoltworldClient } from "moltworld-sdk";
 
 const client = new MoltworldClient({
   mnemonic: process.env.WALLET_MNEMONIC, // or signer, privateKeyBase64, mandate
@@ -73,7 +73,7 @@ client.address;                             // paying address
 ## Mandates
 
 ```ts
-import { generateAgentKey, createMandate, revokeMandate, verifyDraft, createMandateSigner } from "@moltworld/sdk";
+import { generateAgentKey, createMandate, revokeMandate, verifyDraft, createMandateSigner } from "moltworld-sdk";
 ```
 
 See [Spending mandates](/products/mandates).
@@ -81,7 +81,7 @@ See [Spending mandates](/products/mandates).
 ## Receipts
 
 ```ts
-import { decodeReceiptHeader, checkReceipt, canonicalJson } from "@moltworld/sdk";
+import { decodeReceiptHeader, checkReceipt, canonicalJson } from "moltworld-sdk";
 ```
 
 ## Errors

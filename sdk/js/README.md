@@ -1,10 +1,10 @@
-# @moltworld/sdk
+# moltworld-sdk
 
 Pay-per-request AI on Algorand. An x402 client for [Moltworld](https://moltworld.xyz) with hard
 spend limits, payee pinning, automatic receipt verification and agent spending mandates.
 
 ```ts
-import { MoltworldClient } from "@moltworld/sdk";
+import { MoltworldClient } from "moltworld-sdk";
 
 const client = new MoltworldClient({
   mnemonic: process.env.ALGORAND_MNEMONIC, // or privateKeyBase64, signer, or mandate
@@ -30,9 +30,9 @@ the credential contains no private key and cannot pay without that key.
 
 ```ts
 import algosdk from "algosdk";
-import { createMandate, revokeMandate, MoltworldClient } from "@moltworld/sdk";
+import { createMandate, revokeMandate, MoltworldClient } from "moltworld-sdk";
 
-// On the agent's machine: `npx -y -p @moltworld/sdk moltworld-mcp keygen` (or generateAgentKey())
+// On the agent's machine: `npx -y -p moltworld-sdk moltworld-mcp keygen` (or generateAgentKey())
 // prints the agent's address. The key stays there.
 const owner = algosdk.mnemonicToSecretKey(process.env.OWNER_MNEMONIC!);
 const { mandateId, credential } = await createMandate("https://moltworld.xyz", owner, {

@@ -13,7 +13,7 @@ Use a dedicated wallet with a small balance for anything automated. For agents, 
   <Step title="Install the SDK">
     <CodeGroup>
     ```bash npm
-    npm install @moltworld/sdk
+    npm install moltworld-sdk
     ```
     ```bash pip
     pip install ./sdk/python   # from the Moltworld repository
@@ -34,7 +34,7 @@ Use a dedicated wallet with a small balance for anything automated. For agents, 
 
     <CodeGroup>
     ```ts TypeScript
-    import { MoltworldClient } from "@moltworld/sdk";
+    import { MoltworldClient } from "moltworld-sdk";
 
     const client = new MoltworldClient({
       mnemonic: process.env.WALLET_MNEMONIC,

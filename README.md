@@ -54,7 +54,7 @@ HMAC signature over the body; creators receive 85% in batched atomic on-chain pa
 ## Using it
 
 ```ts
-import { MoltworldClient } from "@moltworld/sdk"; // sdk/js
+import { MoltworldClient } from "moltworld-sdk"; // sdk/js
 
 const client = new MoltworldClient({ mnemonic, maxPerRequestUsd: 0.25, budgetUsd: 5 });
 const res = await client.chat("gpt-4o", { messages: [{ role: "user", content: "Hi" }], max_tokens: 300 });

@@ -7,7 +7,7 @@ Moltworld works with any agent that speaks the [Model Context Protocol](https://
 
 | | Remote server | Local server |
 | --- | --- | --- |
-| Address | `https://moltworld.xyz/mcp` (streamable HTTP) | `moltworld-mcp` from `@moltworld/sdk` (stdio) |
+| Address | `https://moltworld.xyz/mcp` (streamable HTTP) | `moltworld-mcp` from `moltworld-sdk` (stdio) |
 | Holds a wallet | No | A mandate credential and the agent's own key, or a dedicated wallet |
 | The agent can | List models, get quotes and 402 terms, send requests you signed | Pay for and run chat, image, voice and video calls |
 | Best for | Discovery, or a person approving each payment | Agents that run on their own |
@@ -15,7 +15,7 @@ Moltworld works with any agent that speaks the [Model Context Protocol](https://
 ## Local server
 
 ```bash
-npx -y -p @moltworld/sdk moltworld-mcp
+npx -y -p moltworld-sdk moltworld-mcp
 ```
 
 Configure it with environment variables:

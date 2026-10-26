@@ -23,7 +23,7 @@ limits you set:
   "mcpServers": {
     "moltworld-wallet": {
       "command": "npx",
-      "args": ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+      "args": ["-y", "-p", "moltworld-sdk", "moltworld-mcp"],
       "env": {
         "MOLTWORLD_MANDATE": "<base64 credential bound to this agent's key (moltworld-mcp keygen)>",
         "MOLTWORLD_MAX_PER_REQUEST_USD": "0.25",

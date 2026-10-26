@@ -1,5 +1,5 @@
 {
-  "name": "@moltworld/sdk",
+  "name": "moltworld-sdk",
   "version": "1.0.0",
   "description": "Pay-per-request AI on Algorand: x402 client for Moltworld with spend limits, receipt verification and agent spending mandates.",
   "type": "module",

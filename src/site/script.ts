@@ -307,7 +307,7 @@ export const SITE_JS = String.raw`
       const args = m.modality === "video" ? { model: m.slug, prompt: body.prompt, duration: body.duration, wait: true } : { model: m.slug, ...body };
       $("snipMcp").textContent = "// Tool call through moltworld-mcp; it quotes, pays within your mandate and returns the result\n" + mcpTool[m.modality] + "(" + JSON.stringify(args, null, 2) + ")";
       $("snipCurl").textContent = "curl -s " + ORIGIN + "/v1/quote -H 'Content-Type: application/json' \\\n  -d '" + JSON.stringify({ model: m.slug, ...body }).replace(/'/g, "'\\''") + "'\n\n# Pay with any x402 client that supports Algorand:\nPOST " + ORIGIN + m.endpoint;
-      $("snipTs").textContent = 'import { MoltworldClient } from "@moltworld/sdk";\n\nconst client = new MoltworldClient({ mnemonic: process.env.ALGORAND_MNEMONIC, maxPerRequestUsd: 1 });\nconst res = await client.' + method[m.modality] + '("' + m.slug + '", ' + JSON.stringify(body, null, 2) + ");\nconsole.log(res.data, res.receipt?.txid);";
+      $("snipTs").textContent = 'import { MoltworldClient } from "moltworld-sdk";\n\nconst client = new MoltworldClient({ mnemonic: process.env.ALGORAND_MNEMONIC, maxPerRequestUsd: 1 });\nconst res = await client.' + method[m.modality] + '("' + m.slug + '", ' + JSON.stringify(body, null, 2) + ");\nconsole.log(res.data, res.receipt?.txid);";
       $("snipPy").textContent = "from moltworld import MoltworldClient\n\nclient = MoltworldClient(mnemonic=\"...\", max_per_request_usd=1)\nres = client.call(\"" + m.endpoint + "\", " + json.replace(/true/g, "True").replace(/false/g, "False") + ")\nprint(res.data, res.receipt[\"txid\"])";
     }
     function syncForm() {
