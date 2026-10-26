@@ -50,7 +50,8 @@ jobs:
 
   ui:
     name: UI tests (desktop, tablet, phones; light and dark)
-    runs-on: ubuntu-latest
+    # Playwright 1.56 has no Chromium build for ubuntu-latest (26.04).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
