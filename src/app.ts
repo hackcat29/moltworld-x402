@@ -48,7 +48,8 @@ import { commerceMiddleware, prepareModelRequest, setGatewayReady } from "./paym
 import { defaultModelRegistry } from "./models/registry.js";
 import { syncCatalog } from "./models/sync.js";
 import { getDatabase } from "./ledger/db.js";
-import { getLogoBytes, getFaviconBytes, getFavicon32Bytes } from "./assets/images.js";
+import { getLogoBytes, getFaviconBytes, getFavicon32Bytes, getOgBytes } from "./assets/images.js";
+import { LOGO_SVG } from "./site/brand.js";
 
 function png(bytes: Uint8Array, type = "image/png") {
   return () =>
@@ -131,6 +132,8 @@ export function createApp(): { app: Hono; init: () => Promise<void> } {
   app.get("/favicon.png", png(getFaviconBytes()));
   app.get("/favicon-32.png", png(getFavicon32Bytes()));
   app.get("/favicon.ico", png(getFavicon32Bytes(), "image/x-icon"));
+  app.get("/og.png", png(getOgBytes()));
+  app.get("/logo.svg", (c) => c.body(LOGO_SVG, 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" }));
 
   // Paid endpoints. Order matters: validate + quote before anything else, so no
   // one pays for a request that cannot succeed; commerce wraps the payment step
