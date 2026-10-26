@@ -149,4 +149,5 @@ export function navMenus(): NavMenu[] {
 export const NAV_LINKS = [
   { label: "Models", href: "/models" },
   { label: "Pricing", href: "/pricing" },
+  { label: "Stats", href: "/stats" },
 ];

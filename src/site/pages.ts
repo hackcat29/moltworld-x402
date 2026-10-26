@@ -1151,9 +1151,6 @@ function usage(c: Context) {
       <dl class="kv-list" style="margin-top:40px" data-reveal>
         <dt>Gross</dt><dd id="sGross">-</dd>
         <dt>Rebated</dt><dd id="sRebated">-</dd>
-        <dt>Returning wallets</dt><dd id="sRepeat">-</dd>
-        <dt>First settlement</dt><dd id="sFirst">-</dd>
-        <dt>Latest settlement</dt><dd id="sLast">-</dd>
       </dl>
     </div></section>
     <div id="facilitatorOnly" hidden>

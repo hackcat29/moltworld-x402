@@ -318,7 +318,7 @@ export function statsWidget(): string {
       <div class="stat-row stat-row-3" data-reveal>
         ${tile("sPaid", "Paid requests")}${tile("sNet", "Net revenue, USDC")}${tile("sRefunds", "Refunded, USDC")}
       </div>
-      <div class="stat-row stat-row-sm" data-reveal>
-        ${tile("sSuccessRate", "Success rate")}${tile("sAvgLatency", "Average settlement")}${tile("sAvgTicket", "Average ticket")}${tile("sPaid24", "Paid requests, 24h")}
+      <div class="stat-row stat-row-sm stat-row-3" data-reveal>
+        ${tile("sSuccessRate", "Success rate")}${tile("sAvgLatency", "Average settlement")}${tile("sAvgTicket", "Average ticket")}
       </div>`;
 }

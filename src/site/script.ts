@@ -645,7 +645,6 @@ export const SITE_JS = String.raw`
     const num = (v) => (typeof v === "number" ? v.toLocaleString() : v);
 
     const usd = (v, digits = 2) => "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
-    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "-");
     const TYPE_LABEL = { chat: "Chat", image: "Image", voice: "Voice", video: "Video", market: "Marketplace", other: "Other" };
     let endpointFilter = "all";
 
@@ -675,7 +674,6 @@ export const SITE_JS = String.raw`
       if (f.success_rate != null) set("sSuccessRate", f.success_rate + "%");
       if (f.avg_settle_ms != null) set("sAvgLatency", f.avg_settle_ms + " ms");
       if (f.avg_ticket_usd != null) set("sAvgTicket", usd(f.avg_ticket_usd));
-      set("sFirst", when(f.first_settle_at)); set("sLast", when(f.last_settle_at));
 
       const nets = f.networks || [], total = nets.reduce((a, n) => a + n.volume_usdc, 0) || 1, netBody = $("networkRows");
       if (netBody) netBody.replaceChildren(...nets.map((n) => el("tr", {},
@@ -701,9 +699,7 @@ export const SITE_JS = String.raw`
       if (!res.ok) return;
       const s = body.metrics;
       set("sPaid", num(s.paid_requests), true);
-      set("sPaid24", num(s.paid_requests_24h));
       set("sGross", fmtUsd(s.gross_usdc)); set("sRebated", fmtUsd(s.rebated_usdc)); set("sNet", fmtUsd(s.net_revenue_usdc), true);
-      set("sRepeat", Math.round((s.repeat_payer_rate || 0) * 100) + "%");
       set("sRefunds", fmtUsd(s.refunded_usdc), true);
 
       if (body.facilitator) renderFacilitator(body.facilitator);
