@@ -313,11 +313,12 @@ export function earningsWidget(): string {
 }
 
 export function statsWidget(): string {
+  const tile = (id: string, label: string) => `<div><div class="v" id="${id}">-</div><div class="k">${label}</div></div>`;
   return `
-      <div class="stat-row" data-reveal>
-        <div><div class="v" id="sPaid">-</div><div class="k">Paid requests</div></div>
-        <div><div class="v" id="sWallets">-</div><div class="k">Paying wallets</div></div>
-        <div><div class="v" id="sNet">-</div><div class="k">Net revenue, USDC</div></div>
-        <div><div class="v" id="sRefunds">-</div><div class="k">Refunded, USDC</div></div>
+      <div class="stat-row stat-row-3" data-reveal>
+        ${tile("sPaid", "Paid requests")}${tile("sNet", "Net revenue, USDC")}${tile("sRefunds", "Refunded, USDC")}
+      </div>
+      <div class="stat-row stat-row-sm" data-reveal>
+        ${tile("sSuccessRate", "Success rate")}${tile("sAvgLatency", "Average settlement")}${tile("sAvgTicket", "Average ticket")}${tile("sPaid24", "Paid requests, 24h")}
       </div>`;
 }

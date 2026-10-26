@@ -371,6 +371,13 @@ async function runViewport(browser, vp, scheme, pages) {
   check("recent settlements listed", rows >= 5, `${rows} rows`);
   const href = await page.locator("#recentRows a").first().getAttribute("href");
   check("settlements link to the explorer", href?.startsWith("https://lora.algokit.io/testnet/transaction/"), href);
+  check("success rate comes from the facilitator", (await page.textContent("#sSuccessRate")) === "99.77%", await page.textContent("#sSuccessRate"));
+  check("network mix lists every network", (await page.locator("#networkRows tr").count()) === 2);
+  check("every facilitator endpoint is listed", (await page.locator("#topModelRows tr").count()) === 5, `${await page.locator("#topModelRows tr").count()} rows`);
+  await page.click('#endpointFilters button:has-text("Chat")');
+  check("endpoint filter narrows the table", (await page.locator("#topModelRows tr").count()) === 1);
+  await page.click('#endpointFilters button:has-text("All")');
+  check("listing shows Bazaar and both accounts", (await page.textContent("#listingList")).includes("Listed") && (await page.locator("#listingList dt").count()) === 5);
 
   // Pages with config tabs
   await page.goto(BASE + "/solutions/agents", { waitUntil: "networkidle" });

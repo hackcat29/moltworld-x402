@@ -1149,22 +1149,36 @@ function usage(c: Context) {
     <section class="sec" style="padding-top:56px"><div class="wrap">
       ${statsWidget()}
       <dl class="kv-list" style="margin-top:40px" data-reveal>
-        <dt>Paid requests, 24h</dt><dd id="sPaid24">-</dd>
         <dt>Gross</dt><dd id="sGross">-</dd>
-        <dt>Facilitator success rate</dt><dd id="sSuccessRate">-</dd>
-        <dt>Average settlement</dt><dd id="sAvgLatency">-</dd>
-        <dt>Average ticket</dt><dd id="sAvgTicket">-</dd>
         <dt>Rebated</dt><dd id="sRebated">-</dd>
         <dt>Returning wallets</dt><dd id="sRepeat">-</dd>
+        <dt>First settlement</dt><dd id="sFirst">-</dd>
+        <dt>Latest settlement</dt><dd id="sLast">-</dd>
       </dl>
     </div></section>
+    <div id="facilitatorOnly" hidden>
+      ${sec(`
+        ${secHead("Network <em>mix.</em>")}
+        <div class="table-wrap" data-reveal><table class="stack">
+          <thead><tr><th>Network</th><th>Settles</th><th>Volume (USDC)</th><th>Share</th></tr></thead>
+          <tbody id="networkRows"></tbody>
+        </table></div>
+      `)}
+    </div>
     ${sec(`
-      ${secHead("Top models <em>by volume.</em>")}
+      ${secHead("Every <em>endpoint.</em>")}
+      <div class="filters" id="endpointFilters" role="group" aria-label="Filter by type" hidden></div>
       <div class="table-wrap" data-reveal><table class="stack">
-        <thead><tr><th>Model</th><th>Settles</th><th>Volume (USDC)</th><th>Price</th></tr></thead>
-        <tbody id="topModelRows"><tr><td colspan="4">Loading</td></tr></tbody>
+        <thead><tr><th>Model</th><th>Type</th><th>Settles</th><th>Volume (USDC)</th><th>Price</th></tr></thead>
+        <tbody id="topModelRows"><tr><td colspan="5">Loading</td></tr></tbody>
       </table></div>
     `)}
+    <div id="listingOnly" hidden>
+      ${sec(`
+        ${secHead("Listing.")}
+        <dl class="kv-list" id="listingList" data-reveal></dl>
+      `)}
+    </div>
     ${sec(`
       ${secHead("Recent <em>settlements.</em>")}
       <div class="table-wrap" data-reveal><table class="stack">

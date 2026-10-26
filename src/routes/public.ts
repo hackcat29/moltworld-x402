@@ -167,7 +167,9 @@ export interface FacilitatorStats {
   avgSettleMs: number;
   firstSeen?: number;
   lastSeen?: number;
-  sparkline?: Array<{ t: number; volume: number; settles: number }>;
+  bazaar?: boolean;
+  challenge?: boolean;
+  accounts?: Array<{ network: { slug: string; name: string; testnet: boolean }; address: string; status: string }>;
   networks?: Array<{
     network: string;
     slug: string;
@@ -187,35 +189,64 @@ export interface FacilitatorStats {
   }>;
 }
 
+// The facilitator is slow to answer now and then. Serve the last good answer while a refresh runs in
+// the background, so a slow request never blanks the page.
 let cachedFacilitatorStats: { data: FacilitatorStats | null; fetchedAt: number } = { data: null, fetchedAt: 0 };
+let facilitatorRefresh: Promise<FacilitatorStats | null> | null = null;
 const FACILITATOR_CACHE_TTL_MS = 60_000;
+const FACILITATOR_TIMEOUT_MS = 8_000;
+
+function refreshFacilitatorStats(): Promise<FacilitatorStats | null> {
+  facilitatorRefresh ??= (async () => {
+    try {
+      const merchantId = encodeURIComponent(config.facilitatorMerchantId || "414f1538ce0d6de4");
+      // Scope to this deployment's network so testnet traffic is not counted on mainnet (and the reverse).
+      const env = config.isMainnet ? "mainnet" : "testnet";
+      const res = await fetch(`${config.facilitatorUrl}/data/merchants/${merchantId}?env=${env}`, {
+        signal: AbortSignal.timeout(FACILITATOR_TIMEOUT_MS),
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) return cachedFacilitatorStats.data;
+      const json = (await res.json()) as FacilitatorStats;
+      if (json && typeof json.settles === "number") {
+        cachedFacilitatorStats = { data: json, fetchedAt: Date.now() };
+        return json;
+      }
+    } catch {
+      // Unreachable or slow: keep serving whatever we already have.
+    } finally {
+      facilitatorRefresh = null;
+    }
+    return cachedFacilitatorStats.data;
+  })();
+  return facilitatorRefresh;
+}
+
+/** Fills the cache at startup so the first visitor to /stats already sees the facilitator's figures. */
+export function warmFacilitatorStats(): void {
+  if (!config.isTest) void refreshFacilitatorStats();
+}
 
 export async function fetchFacilitatorStats(): Promise<FacilitatorStats | null> {
   if (config.isTest) return null;
-  const now = Date.now();
-  if (cachedFacilitatorStats.data && now - cachedFacilitatorStats.fetchedAt < FACILITATOR_CACHE_TTL_MS) {
-    return cachedFacilitatorStats.data;
-  }
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
-    const merchantId = encodeURIComponent(config.facilitatorMerchantId || "414f1538ce0d6de4");
-    const res = await fetch(`${config.facilitatorUrl}/data/merchants/${merchantId}`, {
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
-    clearTimeout(timeout);
-    if (!res.ok) return cachedFacilitatorStats.data;
-    const json = (await res.json()) as FacilitatorStats;
-    if (json && typeof json.settles === "number") {
-      cachedFacilitatorStats = { data: json, fetchedAt: now };
-      return json;
-    }
-  } catch {
-    // If facilitator is unreachable, return stale cache if present
-  }
-  return cachedFacilitatorStats.data;
+  const { data, fetchedAt } = cachedFacilitatorStats;
+  if (data && Date.now() - fetchedAt < FACILITATOR_CACHE_TTL_MS) return data;
+  const refresh = refreshFacilitatorStats();
+  return data ?? refresh;
 }
+
+const MODALITY_BY_ENDPOINT: Record<string, string> = { chat: "chat", images: "image", audio: "voice", videos: "video" };
+
+/** Names a settled resource by the model it serves; marketplace and other endpoints keep their path. */
+function describeResource(url: string): { model: string; modality: string } {
+  const model = url.match(/\/v1\/models\/([^/]+)\/([^/]+)/);
+  if (model) return { model: model[1], modality: MODALITY_BY_ENDPOINT[model[2]] ?? "other" };
+  const market = url.match(/\/v1\/market\/([^/]+)/);
+  if (market) return { model: market[1], modality: "market" };
+  return { model: url.replace(/^https?:\/\/[^/]+/, ""), modality: "other" };
+}
+
+const isoOrNull = (ms?: number) => (ms ? new Date(ms).toISOString() : null);
 
 export async function handleStats(c: Context): Promise<Response> {
   const excluded = operatorWallets();
@@ -259,25 +290,26 @@ export async function handleStats(c: Context): Promise<Response> {
       ? {
           merchant_id: config.facilitatorMerchantId,
           dashboard_url: `https://facilitator.goplausible.xyz/dashboard/merchants/${config.facilitatorMerchantId}`,
+          scope: config.isMainnet ? "mainnet" : "testnet",
           volume_usdc: Number(f.volume.toFixed(2)),
           settles: f.settles,
           success_rate: Number((f.successRate * 100).toFixed(2)),
           payers: f.payers,
           avg_ticket_usd: Number(f.avgTicket.toFixed(4)),
           avg_settle_ms: Math.round(f.avgSettleMs),
-          networks: f.networks ?? [],
-          top_models: (f.resources ?? []).slice(0, 15).map((r) => {
-            const parts = r.url.split("/models/");
-            const modelName = parts[1] ? parts[1].replace(/\/(chat|images|audio|videos)\/.*$/, "") : r.url;
-            return {
-              model: modelName,
-              endpoint: r.url,
-              settles: r.settles,
-              volume_usdc: Number(r.volume.toFixed(2)),
-              price_usdc: r.price,
-            };
-          }),
-          sparkline: f.sparkline ?? [],
+          first_settle_at: isoOrNull(f.firstSeen),
+          last_settle_at: isoOrNull(f.lastSeen),
+          listed: { bazaar: Boolean(f.bazaar), challenge: Boolean(f.challenge) },
+          accounts: (f.accounts ?? []).map((a) => ({ network: a.network.name, testnet: a.network.testnet, address: a.address, status: a.status })),
+          networks: (f.networks ?? []).map((n) => ({ name: n.name, slug: n.slug, testnet: n.testnet, settles: n.events, volume_usdc: Number(n.volume.toFixed(2)) })),
+          endpoints: (f.resources ?? []).map((r) => ({
+            ...describeResource(r.url),
+            endpoint: r.url,
+            method: r.method,
+            settles: r.settles,
+            volume_usdc: Number(r.volume.toFixed(2)),
+            price_usdc: r.price,
+          })),
         }
       : null,
     recent_settlements: s.recent.map((r) => ({

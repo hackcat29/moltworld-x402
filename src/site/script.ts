@@ -644,54 +644,71 @@ export const SITE_JS = String.raw`
     };
     const num = (v) => (typeof v === "number" ? v.toLocaleString() : v);
 
-    const renderFacilitator = (f) => {
-      if (!f) return;
-      if (f.success_rate != null) set("sSuccessRate", f.success_rate + "%");
-      if (f.avg_settle_ms != null) set("sAvgLatency", f.avg_settle_ms + " ms");
-      if (f.avg_ticket_usd != null) set("sAvgTicket", "$" + Number(f.avg_ticket_usd).toFixed(2));
-      const topBody = $("topModelRows");
-      if (topBody && f.top_models && f.top_models.length) {
-        topBody.replaceChildren(...f.top_models.map((m) => el("tr", {},
-          el("td", { "data-label": "Model", text: m.model }),
-          el("td", { "data-label": "Settles", text: Number(m.settles).toLocaleString() }),
-          el("td", { "data-label": "Volume", text: "$" + Number(m.volume_usdc).toFixed(2) }),
-          el("td", { "data-label": "Price", text: "$" + m.price_usdc + " USDC" })
-        )));
+    const usd = (v, digits = 2) => "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    const when = (iso) => (iso ? new Date(iso).toLocaleString() : "-");
+    const TYPE_LABEL = { chat: "Chat", image: "Image", voice: "Voice", video: "Video", market: "Marketplace", other: "Other" };
+    let endpointFilter = "all";
+
+    const renderEndpoints = (endpoints) => {
+      const body = $("topModelRows"), bar = $("endpointFilters");
+      if (!body) return;
+      const types = ["all", ...Object.keys(TYPE_LABEL).filter((t) => endpoints.some((e) => e.modality === t))];
+      if (bar && types.length > 2) {
+        bar.hidden = false;
+        bar.replaceChildren(...types.map((t) => {
+          const n = t === "all" ? endpoints.length : endpoints.filter((e) => e.modality === t).length;
+          const b = el("button", { class: "tab", type: "button", "aria-pressed": String(t === endpointFilter), text: (t === "all" ? "All" : TYPE_LABEL[t]) + " (" + n + ")" });
+          b.addEventListener("click", () => { endpointFilter = t; renderEndpoints(endpoints); });
+          return b;
+        }));
       }
+      const rows = endpoints.filter((e) => endpointFilter === "all" || e.modality === endpointFilter);
+      body.replaceChildren(...rows.map((e) => el("tr", {},
+        el("td", { "data-label": "Model", text: e.model }),
+        el("td", { "data-label": "Type", text: TYPE_LABEL[e.modality] || e.modality }),
+        el("td", { "data-label": "Settles", text: Number(e.settles).toLocaleString() }),
+        el("td", { "data-label": "Volume", text: usd(e.volume_usdc) }),
+        el("td", { "data-label": "Price", text: "$" + e.price_usdc }))));
     };
 
-    api("/v1/stats").then(({ res, body }) => {
+    const renderFacilitator = (f) => {
+      if (f.success_rate != null) set("sSuccessRate", f.success_rate + "%");
+      if (f.avg_settle_ms != null) set("sAvgLatency", f.avg_settle_ms + " ms");
+      if (f.avg_ticket_usd != null) set("sAvgTicket", usd(f.avg_ticket_usd));
+      set("sFirst", when(f.first_settle_at)); set("sLast", when(f.last_settle_at));
+
+      const nets = f.networks || [], total = nets.reduce((a, n) => a + n.volume_usdc, 0) || 1, netBody = $("networkRows");
+      if (netBody) netBody.replaceChildren(...nets.map((n) => el("tr", {},
+        el("td", { "data-label": "Network", text: n.name + (n.testnet ? " (testnet)" : "") }),
+        el("td", { "data-label": "Settles", text: Number(n.settles).toLocaleString() }),
+        el("td", { "data-label": "Volume", text: usd(n.volume_usdc) }),
+        el("td", { "data-label": "Share" }, el("span", { class: "share" }, el("i", { style: "width:" + Math.round((n.volume_usdc / total) * 100) + "%" })), Math.round((n.volume_usdc / total) * 100) + "%"))));
+
+      renderEndpoints(f.endpoints || []);
+
+      const list = $("listingList");
+      if (list) {
+        const rows = [["Bazaar", f.listed && f.listed.bazaar ? "Listed" : "Not listed"], ["402 challenge", f.listed && f.listed.challenge ? "Verified" : "Not verified"], ["Merchant", f.merchant_id]];
+        for (const a of f.accounts || []) rows.push([a.network, a.address]);
+        list.replaceChildren(...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { class: String(v).length > 30 ? "mono" : "", text: v })]));
+      }
+      for (const id of ["facilitatorOnly", "listingOnly"]) { const n = $(id); if (n) n.hidden = false; }
+    };
+
+    // The server serves its last good facilitator answer and refreshes in the background, so a cold
+    // start can come back empty once; ask again before giving up.
+    const load = (attempt) => api("/v1/stats").then(({ res, body }) => {
       if (!res.ok) return;
       const s = body.metrics;
       set("sPaid", num(s.paid_requests), true);
       set("sPaid24", num(s.paid_requests_24h));
       set("sGross", fmtUsd(s.gross_usdc)); set("sRebated", fmtUsd(s.rebated_usdc)); set("sNet", fmtUsd(s.net_revenue_usdc), true);
-      set("sWallets", num(s.unique_paying_wallets), true);
       set("sRepeat", Math.round((s.repeat_payer_rate || 0) * 100) + "%");
       set("sRefunds", fmtUsd(s.refunded_usdc), true);
 
-      if (body.facilitator) {
-        renderFacilitator(body.facilitator);
-      } else if ($("topModelRows")) {
-        // Direct fallback to the facilitator's public data when the gateway has none cached.
-        fetch("https://facilitator.goplausible.xyz/data/merchants/414f1538ce0d6de4")
-          .then((r) => r.json())
-          .then((fdata) => {
-            if (!fdata || typeof fdata.settles !== "number") return;
-            renderFacilitator({
-              success_rate: (fdata.successRate * 100).toFixed(1),
-              avg_settle_ms: Math.round(fdata.avgSettleMs),
-              avg_ticket_usd: fdata.avgTicket,
-              top_models: (fdata.resources || []).slice(0, 15).map((r) => ({
-                model: (r.url.split("/models/")[1] || "").replace(/\/(chat|images|audio|videos)\/.*$/, "") || r.url,
-                settles: r.settles,
-                volume_usdc: r.volume,
-                price_usdc: r.price,
-              })),
-            });
-          })
-          .catch(() => {});
-      }
+      if (body.facilitator) renderFacilitator(body.facilitator);
+      else if (attempt < 2) setTimeout(() => load(attempt + 1), 2500);
+      else { const t = $("topModelRows"); if (t) t.replaceChildren(el("tr", {}, el("td", { colspan: "5", text: "Facilitator figures are unavailable right now." }))); }
 
       const tbody = $("recentRows");
       if (!tbody) return;
@@ -702,6 +719,7 @@ export const SITE_JS = String.raw`
         el("td", { "data-label": "Transaction", class: "mono" }, r.txid ? txLink(r.txid) : "-")));
       tbody.replaceChildren(...(rows.length ? rows : [el("tr", {}, el("td", { colspan: "4", text: "No settlements yet." }))]));
     }).catch(() => {});
+    load(0);
   }
 })();
 `;

@@ -24,6 +24,7 @@ import {
   handleQuote,
   handleReceiptKeys,
   handleStats,
+  warmFacilitatorStats,
   recordCatalogSync,
 } from "./routes/public.js";
 import { handleModelRequest } from "./routes/models.js";
@@ -153,6 +154,7 @@ export function createApp(): { app: Hono; init: () => Promise<void> } {
 
   const init = async () => {
     await getDatabase();
+    warmFacilitatorStats();
     const report = await syncCatalog(defaultModelRegistry);
     recordCatalogSync(report);
     if (Object.keys(report.unverified).length) {

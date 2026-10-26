@@ -52,6 +52,42 @@ function send(res: http.ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 
+/** A merchant record shaped like the facilitator's /data/merchants/:id answer, for the stats page. */
+function merchantFixture() {
+  const day = 86_400_000;
+  const start = Date.UTC(2026, 9, 12);
+  const resource = (id: string, path: string, settles: number, volume: number, price: number) => ({ id, url: `https://moltworld.xyz${path}`, method: "POST", settles, volume, price, priceAsset: "USDC" });
+  return {
+    id: "414f1538ce0d6de4",
+    address: "TQWEL54TCBYH3QJLN2OU2QH7XZTHRDZMF2YQIU5B7W2HK6GS7I2TWHDMXU",
+    accounts: [
+      { network: { slug: "algorand-testnet", name: "Algorand Testnet", testnet: true }, address: "TQWEL54TCBYH3QJLN2OU2QH7XZTHRDZMF2YQIU5B7W2HK6GS7I2TWHDMXU", status: "active" },
+      { network: { slug: "algorand-mainnet", name: "Algorand", testnet: false }, address: "NAPHTASVPDGRYORRYM237OSPA26R2TRRG4XFRRFK7K5H64H6HIIIZZIIXY", status: "active" },
+    ],
+    bazaar: true,
+    challenge: true,
+    volume: 1204.5,
+    settles: 2053,
+    successRate: 0.9977,
+    payers: 54,
+    avgTicket: 0.5868,
+    avgSettleMs: 79.9,
+    firstSeen: start,
+    lastSeen: start + 14 * day,
+    networks: [
+      { network: "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k", slug: "algorand-mainnet", name: "Algorand", volume: 1204.46, events: 2049, testnet: false },
+      { network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe", slug: "algorand-testnet", name: "Algorand Testnet", volume: 0.04, events: 4, testnet: true },
+    ],
+    resources: [
+      resource("r1", "/v1/models/sora-2-pro/videos/generations", 709, 730.5, 1.03),
+      resource("r2", "/v1/models/gpt-4o/chat/completions", 640, 2.18, 0.003413),
+      resource("r3", "/v1/models/flux-2-pro/images/generations", 410, 25.6, 0.06),
+      resource("r4", "/v1/models/tts-1/audio/speech", 120, 0.4, 0.003),
+      resource("r5", "/v1/market/demo-api/call", 40, 0.2, 0.005),
+    ],
+  };
+}
+
 export async function startHarness() {
   const chain: Chain = { balances: new Map(), round: 1_000_000, settled: [], failNextSettle: false };
 
@@ -178,6 +214,7 @@ export async function startHarness() {
     try {
       const url = new URL(req.url ?? "/", "http://x");
       if (req.method === "GET" && url.pathname === "/supported") return send(res, 200, facilitator.getSupported());
+      if (req.method === "GET" && url.pathname.startsWith("/data/merchants/")) return send(res, 200, merchantFixture());
       const body = await readJson(req);
       if (req.method === "POST" && url.pathname === "/verify") {
         return send(res, 200, await facilitator.verify(body.paymentPayload, body.paymentRequirements));

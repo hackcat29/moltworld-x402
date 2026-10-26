@@ -2125,6 +2125,11 @@
           "metrics": {
             "type": "object"
           },
+          "facilitator": {
+            "type": "object",
+            "nullable": true,
+            "description": "The x402 facilitator's record for this merchant on this network: volume, settles, success rate, payers, first and last settlement, network mix (networks), every settled endpoint (endpoints), and listing status. Null when the facilitator is unreachable and nothing is cached."
+          },
           "recent_settlements": {
             "type": "array",
             "items": {
