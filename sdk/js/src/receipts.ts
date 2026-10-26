@@ -1,4 +1,7 @@
-import crypto from "crypto";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+import { fromBase64, fromUtf8, utf8 } from "./encoding.js";
 
 /** Mirror of the gateway's receipt format (see /.well-known/moltworld-receipts.json). */
 export interface MoltworldReceipt {
@@ -40,14 +43,12 @@ export function canonicalJson(value: unknown): string {
 }
 
 export function sha256Hex(data: Uint8Array | string): string {
-  return crypto.createHash("sha256").update(data).digest("hex");
+  return bytesToHex(sha256(typeof data === "string" ? utf8(data) : data));
 }
 
 export function decodeReceiptHeader(header: string): MoltworldReceipt {
-  return JSON.parse(Buffer.from(header, "base64url").toString("utf8"));
+  return JSON.parse(fromUtf8(fromBase64(header)));
 }
-
-const SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 /** Verify a receipt against the gateway's published key and the bytes you sent and received. */
 export function checkReceipt(
@@ -57,9 +58,8 @@ export function checkReceipt(
 ): ReceiptCheck {
   let signatureValid = false;
   try {
-    const key = crypto.createPublicKey({ key: Buffer.concat([SPKI_PREFIX, Buffer.from(publicKeyBase64, "base64")]), format: "der", type: "spki" });
     const { sig, ...payload } = receipt;
-    signatureValid = crypto.verify(null, Buffer.from(canonicalJson(payload)), key, Buffer.from(sig, "base64url"));
+    signatureValid = ed25519.verify(fromBase64(sig), utf8(canonicalJson(payload)), fromBase64(publicKeyBase64));
   } catch {
     signatureValid = false;
   }

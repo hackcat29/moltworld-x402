@@ -3,10 +3,15 @@ import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/client";
 import { checkReceipt, decodeReceiptHeader, MoltworldReceipt, ReceiptCheck } from "./receipts.js";
-import { createMandateSigner, MandateCredential } from "./mandates.js";
+import { createMandateSigner, MandateCredential, mandateTermsFromProgram } from "./mandates.js";
+import { CappedMandateScheme } from "./mandateScheme.js";
+import { fromBase64, toBase64 } from "./encoding.js";
 
 export * from "./receipts.js";
 export * from "./mandates.js";
+export * from "./encoding.js";
+export * from "./counter.js";
+export { CappedMandateScheme } from "./mandateScheme.js";
 
 const NETWORKS = {
   mainnet: ["algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=", "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k"],
@@ -25,6 +30,8 @@ export interface MoltworldClientOptions {
   mnemonic?: string;
   privateKeyBase64?: string;
   mandate?: MandateCredential;
+  /** The agent's own key (base64 secret), required with a mandate that is bound to it. */
+  agentKey?: string;
   /** Hard per-request cap enforced before anything is signed. Default $1. */
   maxPerRequestUsd?: number;
   /** Total spend cap for this client instance. */
@@ -65,10 +72,11 @@ export class MoltworldClient {
   constructor(options: MoltworldClientOptions) {
     this.options = options;
     this.baseUrl = (options.baseUrl ?? "https://moltworld.xyz").replace(/\/$/, "");
-    this.baseFetch = options.fetch ?? fetch;
+    // Bound so it can be called as a method; browsers reject fetch with a foreign `this`.
+    this.baseFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     if (options.signer) this.signer = options.signer;
-    else if (options.mandate) this.signer = createMandateSigner(options.mandate);
-    else if (options.mnemonic) this.signer = toClientAvmSigner(Buffer.from(algosdk.mnemonicToSecretKey(options.mnemonic).sk).toString("base64"));
+    else if (options.mandate) this.signer = createMandateSigner(options.mandate, options.agentKey);
+    else if (options.mnemonic) this.signer = toClientAvmSigner(toBase64(algosdk.mnemonicToSecretKey(options.mnemonic).sk));
     else if (options.privateKeyBase64) this.signer = toClientAvmSigner(options.privateKeyBase64);
     else throw new Error("MoltworldClient needs a signer, mnemonic, privateKeyBase64 or mandate.");
   }
@@ -92,10 +100,14 @@ export class MoltworldClient {
     const health = await this.getJson("/health");
     this.payTo = this.options.expectedPayTo ?? health.pay_to;
     const networks = String(health.network) === "mainnet" ? NETWORKS.mainnet : NETWORKS.testnet;
+    // A mandate capped on-chain pays in a group that also calls the spend counter.
+    const capped = this.options.mandate ? mandateTermsFromProgram(fromBase64(this.options.mandate.programB64))?.counter : undefined;
     const client = x402Client.fromConfig({
       schemes: networks.map((network) => ({
         network: network as any,
-        client: new ExactAvmScheme(this.signer as any, this.options.algodUrl ? { algodUrl: this.options.algodUrl } : undefined),
+        client: capped
+          ? (new CappedMandateScheme(this.options.mandate!, this.options.agentKey, this.options.algodUrl) as any)
+          : new ExactAvmScheme(this.signer as any, this.options.algodUrl ? { algodUrl: this.options.algodUrl } : undefined),
       })),
       spendControls: { maxAmountPerPayment: `$${this.options.maxPerRequestUsd ?? 1}` },
     });

@@ -2,25 +2,48 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
-import { realpathSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { dirname, join } from "path";
 import { pathToFileURL } from "url";
-import { MoltworldClient, MoltworldError } from "./index.js";
+import { agentKeyFromSecret, generateAgentKey, MoltworldClient, MoltworldError } from "./index.js";
 
 /**
  * Local MCP server that lets an agent pay Moltworld by itself, within limits:
  *   MOLTWORLD_MANDATE      base64 JSON {owner, programB64, delegationSigB64} (recommended: on-chain limits)
+ *   MOLTWORLD_AGENT_KEY_FILE  the agent's own key; default ~/.moltworld/agent.key (create it with `keygen`)
  *   MOLTWORLD_MNEMONIC     or a dedicated low-balance wallet
  *   MOLTWORLD_MAX_PER_REQUEST_USD   default 0.50
  *   MOLTWORLD_BUDGET_USD            default 5 per server session
  *   MOLTWORLD_URL                   default https://moltworld.xyz
  */
+const agentKeyFile = () => process.env.MOLTWORLD_AGENT_KEY_FILE || join(homedir(), ".moltworld", "agent.key");
+
+/** Creates the agent's key once, readable only by this user, and prints its address for the owner. */
+function keygen() {
+  const file = agentKeyFile();
+  if (existsSync(file)) {
+    console.log(agentKeyFromSecret(readFileSync(file, "utf8").trim()).address);
+    console.error(`Agent key already exists at ${file}.`);
+    return;
+  }
+  const key = generateAgentKey();
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, key.secretKeyB64 + "\n", { mode: 0o600 });
+  chmodSync(file, 0o600);
+  console.log(key.address);
+  console.error(`Agent key saved to ${file}. Give the owner the address above to bind a mandate to it.`);
+}
+
 function clientFromEnv(): MoltworldClient {
   const mandate = process.env.MOLTWORLD_MANDATE
     ? JSON.parse(Buffer.from(process.env.MOLTWORLD_MANDATE, "base64").toString("utf8"))
     : undefined;
+  const keyFile = agentKeyFile();
   return new MoltworldClient({
     baseUrl: process.env.MOLTWORLD_URL,
     mandate,
+    agentKey: mandate && existsSync(keyFile) ? readFileSync(keyFile, "utf8").trim() : undefined,
     mnemonic: mandate ? undefined : process.env.MOLTWORLD_MNEMONIC,
     maxPerRequestUsd: Number(process.env.MOLTWORLD_MAX_PER_REQUEST_USD ?? 0.5),
     budgetUsd: Number(process.env.MOLTWORLD_BUDGET_USD ?? 5),
@@ -134,7 +157,8 @@ export async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  main().catch((err) => {
+  if (process.argv[2] === "keygen") keygen();
+  else main().catch((err) => {
     console.error(err);
     process.exit(1);
   });
