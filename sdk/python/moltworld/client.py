@@ -7,13 +7,15 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from algosdk import encoding, mnemonic as algo_mnemonic, transaction
 from algosdk.account import address_from_private_key
 from algosdk.v2client import algod
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
+
+from .mandates import MandatePayer
 
 MICRO = 1_000_000
 ALGOD = {
@@ -72,18 +74,22 @@ class MoltworldClient:
         base_url: str = "https://moltworld.xyz",
         private_key: Optional[str] = None,
         mnemonic: Optional[str] = None,
+        mandate: Optional[Union[str, Dict[str, Any]]] = None,
+        agent_key: Optional[str] = None,
         max_per_request_usd: float = 1.0,
         budget_usd: Optional[float] = None,
         expected_pay_to: Optional[str] = None,
         algod_url: Optional[str] = None,
         timeout: float = 120.0,
     ):
+        # A mandate pays as its owner, co-signed by the agent's own key (agent_key).
+        self._mandate = MandatePayer(mandate, agent_key) if mandate else None
         if mnemonic:
             private_key = algo_mnemonic.to_private_key(mnemonic)
-        if not private_key:
-            raise ValueError("MoltworldClient needs private_key (algosdk base64) or mnemonic.")
+        if not private_key and not self._mandate:
+            raise ValueError("MoltworldClient needs private_key (algosdk base64), mnemonic, or mandate with agent_key.")
         self._sk = private_key
-        self.address = address_from_private_key(private_key)
+        self.address = self._mandate.owner if self._mandate else address_from_private_key(private_key)
         self.base_url = base_url.rstrip("/")
         self.max_per_request_micro = int(round(max_per_request_usd * MICRO))
         self.budget_micro = None if budget_usd is None else int(round(budget_usd * MICRO))
@@ -147,6 +153,16 @@ class MoltworldClient:
         fee_payer = (req.get("extra") or {}).get("feePayer")
         stamp = int(time.time() * 1000)
         version = payment_required.get("x402Version", 2)
+        if self._mandate:
+            if not fee_payer:
+                raise MoltworldError("Mandate payments need a facilitator that sponsors fees.", 402, "no_fee_payer")
+            try:
+                group_b64, index = self._mandate.payment_group(sp, req, amount, fee_payer, version, stamp)
+            except ValueError as err:
+                raise MoltworldError(str(err), 402, "mandate_refused") from err
+            payload = {"x402Version": version, "payload": {"paymentGroup": group_b64, "paymentIndex": index}, "extensions": payment_required.get("extensions"), "resource": payment_required.get("resource"), "accepted": req}
+            payload = {k: v for k, v in payload.items() if v is not None}
+            return base64.b64encode(json.dumps(payload).encode()).decode(), amount
         pay_sp = transaction.SuggestedParams(0, sp.first, sp.last, sp.gh, sp.gen, flat_fee=True, min_fee=sp.min_fee)
         payment = transaction.AssetTransferTxn(
             sender=self.address,
