@@ -60,7 +60,7 @@ async function noHorizontalOverflow(page) {
     const offenders = [];
     for (const el of document.querySelectorAll("body *")) {
       const style = getComputedStyle(el);
-      if (style.display === "none" || style.visibility === "hidden" || el.closest("pre, .table-wrap, .skip, .sr-only")) continue;
+      if (style.display === "none" || style.visibility === "hidden" || el.closest("pre, .table-wrap, .skip, .sr-only, [data-clip], .rail")) continue;
       const r = el.getBoundingClientRect();
       if (r.width && (r.right > vw + 1 || r.left < -1)) offenders.push(`${el.tagName.toLowerCase()}.${el.className}`.slice(0, 60));
     }
@@ -70,7 +70,7 @@ async function noHorizontalOverflow(page) {
 
 // Every HTML page reachable from the home page through internal links.
 async function crawlSite() {
-  const skip = /^\/(v1|\.well-known|assets|llms\.txt|health|mcp|a2a)|\.(png|ico|json|txt)$/;
+  const skip = /^\/(v1|\.well-known|assets|llms\.txt|health|mcp|a2a)|\.(png|ico|json|txt|svg)$/;
   const seen = new Set(["/"]);
   const queue = ["/"];
   const broken = [];
@@ -129,7 +129,7 @@ async function checkPage(page, p, vp, scheme) {
   check(`${p}: images have alt text`, (await page.locator("img:not([alt])").count()) === 0);
   check(`${p}: no in-page links in the header`, (await page.locator('header a[href^="#"]').count()) === 0);
   const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  check(`${p}: ${scheme} color scheme applied`, scheme === "dark" ? bg === "rgb(7, 9, 14)" : bg === "rgb(247, 248, 251)", bg);
+  check(`${p}: ${scheme} color scheme applied`, scheme === "dark" ? bg === "rgb(10, 10, 11)" : bg === "rgb(244, 243, 238)", bg);
   if (vp.mobile) {
     const small = await page.evaluate(() =>
       [...document.querySelectorAll("button, .btn, nav a")]
@@ -156,7 +156,9 @@ async function runViewport(browser, vp, scheme, pages) {
   const label = (await page.textContent("#netLabel")).trim();
   check("header shows the network from /health", /^Algorand (Mainnet|Testnet)$/.test(label), label);
   const triggers = (await page.locator(".nav-trigger").allTextContents()).map((t) => t.trim());
-  check("header menus", triggers.join(",") === "Products,Solutions,Use cases,Docs", triggers.join(","));
+  check("header menus", triggers.join(",") === "Product,Solutions,Use cases,Developers", triggers.join(","));
+  const direct = (await page.locator(".nav-direct").allTextContents()).map((t) => t.trim());
+  check("header links", direct.join(",") === "Models,Pricing", direct.join(","));
   const collapsed = await page.locator("#menuBtn").isVisible();
   if (collapsed) {
     check("mobile: nav hidden until the menu button is used", !(await page.locator("#nav").isVisible()));
@@ -164,11 +166,11 @@ async function runViewport(browser, vp, scheme, pages) {
     check("mobile: menu button opens the nav", (await page.getAttribute("#menuBtn", "aria-expanded")) === "true" && (await page.locator("#nav").isVisible()));
     check("mobile: page behind the menu does not scroll", (await page.evaluate(() => getComputedStyle(document.body).overflow)) === "hidden");
     check("mobile: Playground in the open menu", await page.locator('.nav-mobile-cta a[href="/playground"]').isVisible());
-    await page.click('.nav-trigger[aria-controls="menu-use-cases"]');
-    check("mobile: section expands", await page.locator("#menu-use-cases").isVisible());
+    await page.click('.nav-trigger[aria-controls="menu-solutions"]');
+    check("mobile: section expands", await page.locator("#menu-solutions").isVisible());
     await shot(page, "menu-open");
-    await page.click('#menu-use-cases a[href="/use-cases/model-escalation"]');
-    await page.waitForURL(BASE + "/use-cases/model-escalation");
+    await page.click('#menu-solutions a[href="/solutions/model-escalation"]');
+    await page.waitForURL(BASE + "/solutions/model-escalation");
     check("mobile: menu link navigates", (await page.textContent("h1")).length > 0);
     check("mobile: menu closed after navigation", !(await page.locator("#nav").isVisible()));
     await page.click("#menuBtn");
@@ -192,9 +194,13 @@ async function runViewport(browser, vp, scheme, pages) {
     await page.click('#menu-products a[href="/products/mandates"]');
     await page.waitForURL(BASE + "/products/mandates");
     check("desktop: dropdown link navigates", true);
-    check("desktop: current section marked", (await page.locator(".nav-item.active .nav-trigger").textContent()).trim() === "Products");
-    const docsLinks = await page.locator("#menu-docs a").evaluateAll((els) => els.map((a) => a.href));
-    check("desktop: docs menu points at the docs site", docsLinks.length > 0 && docsLinks.every((h) => h.startsWith("https://docs.moltworld.xyz")), docsLinks.join(","));
+    check("desktop: current section marked", (await page.locator(".nav-item.active .nav-trigger").textContent()).trim() === "Product");
+    const buildLinks = await page.locator("#menu-developers .nav-col").first().locator("a").evaluateAll((els) => els.map((a) => a.href));
+    check("desktop: developer menu points at the docs site", buildLinks.length > 0 && buildLinks.every((h) => h.startsWith("https://docs.moltworld.xyz")), buildLinks.join(","));
+    await page.click('.nav-trigger[aria-controls="menu-developers"]');
+    const devBox = await page.locator("#menu-developers").boundingBox();
+    check("desktop: developer menu fits the viewport", devBox && devBox.x >= 0 && devBox.x + devBox.width <= vw, JSON.stringify(devBox));
+    await page.keyboard.press("Escape");
     await page.click('.header-actions a[href="/playground"]');
     await page.waitForURL(BASE + "/playground");
     check("desktop: Playground button navigates", true);
@@ -267,6 +273,54 @@ async function runViewport(browser, vp, scheme, pages) {
   await page.click('#receiptForm button[type="submit"]');
   await page.waitForFunction(() => document.querySelector("#receiptOut .badge")?.textContent.trim() === "Invalid");
   check("tampered receipt is rejected", true);
+
+  // Playground: real x402 payments on the local ledger, from a wallet and from an agent mandate
+  await page.click("#walletLoad");
+  await page.locator("[data-wallet]", { hasText: "Local dev wallet" }).click();
+  await page.waitForFunction(() => /USDC$/.test(document.getElementById("walletBal")?.textContent || ""));
+  const balanceOf = async () => parseFloat((await page.textContent("#walletBal")).replace(/[^0-9.]/g, ""));
+  const before = await balanceOf();
+  await page.selectOption("#qModel", "gpt-4o");
+  await page.fill("#qMessage", "Paid run from the UI test.");
+  const runQuote = await page.evaluate(async () => {
+    const body = { model: "gpt-4o", messages: [{ role: "user", content: document.getElementById("qMessage").value }], max_tokens: Number(document.getElementById("qMaxTokens").value) };
+    return (await (await fetch("/v1/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json()).quote.formattedPrice;
+  });
+  const priced = await page.waitForFunction((want) => document.getElementById("runPrice").textContent === want, runQuote, { timeout: 5000 }).then(() => true, () => false);
+  check("run button shows the live price", priced, `${await page.textContent("#runPrice")} vs ${runQuote}`);
+  await page.click("#runBtn");
+  await page.waitForSelector("#quoteOut .run-receipt", { timeout: 30000 });
+  check("wallet run returns the model's answer", (await page.textContent("#quoteOut .answer-text")).includes("Paid run from the UI test."));
+  check("wallet run receipt verifies in the browser", (await page.textContent("#quoteOut .run-receipt .badge")).trim() === "Receipt valid", await page.textContent("#quoteOut"));
+  const settlement = await page.getAttribute("#quoteOut .run-receipt a", "href");
+  check("wallet run links its settlement", settlement?.startsWith("https://lora.algokit.io/testnet/transaction/"), settlement);
+  await page.waitForFunction((b) => parseFloat(document.getElementById("walletBal").textContent.replace(/[^0-9.]/g, "")) < b, before);
+  check("wallet balance drops after paying", (await balanceOf()) < before);
+
+  await page.click('[data-payer-mode="mandate"]');
+  await page.click("#mandateDev");
+  await page.waitForSelector("#mandateActive:not(.hidden)");
+  const owner = await page.getAttribute("#mandateOwner", "title");
+  check("dev mandate's cap is enforced on-chain", (await page.textContent("#mandateLimits")).includes("cap on-chain"), await page.textContent("#mandateLimits"));
+  await page.fill("#capInput", "0.0001");
+  await page.click("#runBtn");
+  await page.waitForSelector("#quoteOut .err");
+  check("per-request cap blocks the payment", (await page.textContent("#quoteOut .err")).includes("max per request"));
+  await page.fill("#capInput", "1");
+  await page.selectOption("#qModel", "gpt");
+  await page.click("#runBtn");
+  await page.waitForSelector("#quoteOut .run-receipt", { timeout: 30000 });
+  check("mandate run receipt verifies", (await page.textContent("#quoteOut .run-receipt .badge")).trim() === "Receipt valid");
+  check("mandate run is paid by the mandate owner", (await page.textContent("#quoteOut .run-receipt")).includes(owner), owner);
+  await page.waitForFunction(() => !document.getElementById("mandateLimits").textContent.includes("$0 of"));
+  check("mandate spend updates after paying", true);
+  check("this browser shows its own agent address", /^Agent [A-Z2-7]{6}\.\.\./.test(await page.textContent("#agentAddr")), await page.textContent("#agentAddr"));
+  const devCredential = await page.evaluate(() => JSON.parse(document.getElementById("payConfig").textContent).devMandate);
+  await page.click("#mandateOff");
+  await page.fill("#mandateCred", devCredential);
+  await page.click("#mandateUse");
+  await page.waitForFunction(() => document.getElementById("toast").textContent.includes("bound to agent"));
+  check("a credential bound to another agent is refused", await page.locator("#mandateActive.hidden").count() === 1);
   await shot(page, "playground", { fullPage: true });
 
   // Models: catalog filters, paging, search, link to the playground
@@ -323,8 +377,13 @@ async function runViewport(browser, vp, scheme, pages) {
   await page.click("#t-agents-openclaw");
   check("agent config tabs switch", await page.locator("#p-agents-openclaw").isVisible());
   await shot(page, "solutions-agents", { fullPage: true });
-  await page.goto(BASE + "/use-cases/agent-allowance", { waitUntil: "networkidle" });
+  await page.goto(BASE + "/use-cases/coding-agents", { waitUntil: "networkidle" });
+  check("agent use case shows how it connects", (await page.locator(".pays").count()) > 0);
+  await page.click("#t-agent-cursor");
+  check("agent config tabs switch", await page.locator("#p-agent-cursor").isVisible());
   await shot(page, "use-case", { fullPage: true });
+  const moved = await page.goto(BASE + "/use-cases/agent-allowance", { waitUntil: "networkidle" });
+  check("old workflow URLs redirect to /solutions", moved.url() === BASE + "/solutions/agent-allowance", moved.url());
 
   const after = await noHorizontalOverflow(page);
   check("no horizontal scroll after interactions", after.scroll <= 0 && after.offenders.length === 0, `${after.scroll} ${after.offenders}`);
@@ -340,7 +399,7 @@ try {
   const { pages, broken } = await crawlSite();
   console.log(`${pages.length} pages: ${pages.join(" ")}`);
   check("internal links all resolve", broken.length === 0, broken.join(", "));
-  check("every section has pages", ["/products", "/solutions", "/use-cases", "/playground", "/models", "/stats"].every((p) => pages.includes(p)), pages.join(","));
+  check("every section has pages", ["/products", "/solutions", "/use-cases", "/playground", "/models", "/stats", "/pricing", "/developers", "/use-cases/coding-agents", "/solutions/agent-allowance"].every((p) => pages.includes(p)), pages.join(","));
   for (const vp of VIEWPORTS) {
     for (const scheme of ["light", "dark"]) {
       try {

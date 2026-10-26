@@ -1,45 +1,83 @@
 import { config } from "../config.js";
+import { agentTypes } from "./agents.js";
 
 export interface NavLink {
   label: string;
   href: string;
-  description: string;
+  icon: string;
+}
+
+export interface NavGroup {
+  /** Announced to assistive tech; not shown. */
+  title: string;
+  links: NavLink[];
+  /** Secondary column: rendered as plain text links. */
+  minor?: boolean;
 }
 
 export interface NavMenu {
   id: string;
   label: string;
-  /** Overview page for the section (also the no-JS fallback for the trigger). */
+  /** Overview page for the section. */
   href: string;
-  links: NavLink[];
+  groups: NavGroup[];
+  /** Extra paths that mark this section as current. */
+  match?: string[];
 }
 
-export const USE_CASES = [
+/** Jobs people do with Moltworld, whatever agent they use. Pages live under /solutions. */
+export const WORKFLOWS = [
   {
     slug: "agent-allowance",
-    title: "Spending allowance for personal agents",
-    summary: "Give an always-on agent a capped, revocable budget for models it doesn't have.",
+    short: "Agent allowances",
+    title: "Give your agent a budget, not your keys",
+    summary: "A capped, revocable allowance for the models your always-on agent doesn't have.",
   },
   {
     slug: "model-escalation",
-    title: "Escalate hard steps to a stronger model",
+    short: "Model escalation",
+    title: "Pay for a frontier model only on the hard steps",
     summary: "Run on a cheap model and pay for a frontier model only when a step needs it.",
   },
   {
     slug: "content-pipelines",
-    title: "Content pipelines",
-    summary: "Generate video, voice-overs and images per post, with failed jobs refunded.",
+    short: "Content pipelines",
+    title: "Script, voice and video through one API",
+    summary: "Generate every asset per post through one API, with failed jobs refunded on-chain.",
   },
   {
     slug: "agent-commerce",
-    title: "Agent-to-agent commerce",
-    summary: "Sell your API or agent skill to other agents and get paid per call.",
+    short: "Agent commerce",
+    title: "Let agents buy from agents",
+    summary: "Sell your API or agent skill to other agents and get paid per call in USDC.",
   },
   {
     slug: "team-budgets",
-    title: "Budgets for team agents",
-    summary: "One mandate per agent or employee, each with its own limits and an audit trail.",
+    short: "Team budgets",
+    title: "One budget per agent, one audit trail",
+    summary: "A mandate per agent or teammate, each with its own limits and its own receipts.",
   },
+] as const;
+
+/** What a customer can adopt on its own. */
+export const PRODUCTS = [
+  { label: "Gateway", href: "/products/gateway", icon: "gateway" },
+  { label: "Mandates", href: "/products/mandates", icon: "mandate" },
+  { label: "Marketplace", href: "/products/marketplace", icon: "market" },
+] as const;
+
+/** What every paid call gets, whichever product made it. */
+export function builtIn() {
+  return [
+    { label: "Signed receipts", href: "/products/receipts", icon: "receipt" },
+    { label: "Refunds and rebates", href: `${config.docsUrl}/concepts/refunds-and-rebates`, icon: "refund" },
+  ];
+}
+
+export const AUDIENCES = [
+  { label: "AI agents", href: "/solutions/agents", icon: "agent" },
+  { label: "App developers", href: "/solutions/developers", icon: "code" },
+  { label: "API sellers", href: "/solutions/api-creators", icon: "plug" },
 ] as const;
 
 export function navMenus(): NavMenu[] {
@@ -47,42 +85,68 @@ export function navMenus(): NavMenu[] {
   return [
     {
       id: "products",
-      label: "Products",
+      label: "Product",
       href: "/products",
-      links: [
-        { label: "Gateway", href: "/products/gateway", description: "One API for chat, image, voice and video models, paid per request." },
-        { label: "Models", href: "/models", description: "Every model, its upstream and its price." },
-        { label: "Mandates", href: "/products/mandates", description: "Let an agent spend from your wallet, within limits you set." },
-        { label: "Marketplace", href: "/products/marketplace", description: "Sell your own API through Moltworld's checkout." },
-        { label: "Receipts", href: "/products/receipts", description: "Signed proof of what you paid for and what you got." },
+      groups: [
+        { title: "Products", links: PRODUCTS.map((p) => ({ ...p })) },
+        { title: "Built into every call", links: builtIn(), minor: true },
       ],
     },
     {
       id: "solutions",
       label: "Solutions",
       href: "/solutions",
-      links: [
-        { label: "Agent frameworks", href: "/solutions/agents", description: "OpenClaw, Hermes Agent, Claude Code and any MCP client." },
-        { label: "Developers", href: "/solutions/developers", description: "Add AI to your app without API keys or subscriptions." },
-        { label: "API creators", href: "/solutions/api-creators", description: "Charge per call for your API, paid in USDC." },
+      groups: [
+        { title: "By customer", links: AUDIENCES.map((a) => ({ ...a })) },
+        { title: "By workflow", links: WORKFLOWS.map((u) => ({ label: u.short, href: `/solutions/${u.slug}`, icon: "spark" })), minor: true },
       ],
     },
+    (() => {
+      const types = agentTypes().map((t) => ({ label: t.short, href: `/use-cases/${t.slug}`, icon: t.icon }));
+      const half = Math.ceil(types.length / 2);
+      return {
+        id: "use-cases",
+        label: "Use cases",
+        href: "/use-cases",
+        groups: [
+          { title: "By kind of agent", links: types.slice(0, half) },
+          { title: "More kinds of agent", links: types.slice(half) },
+        ],
+      };
+    })(),
     {
-      id: "use-cases",
-      label: "Use cases",
-      href: "/use-cases",
-      links: USE_CASES.map((u) => ({ label: u.title, href: `/use-cases/${u.slug}`, description: u.summary })),
-    },
-    {
-      id: "docs",
-      label: "Docs",
-      href: docs,
-      links: [
-        { label: "Quickstart", href: `${docs}/quickstart`, description: "Make your first paid request in a few minutes." },
-        { label: "API reference", href: `${docs}/api-reference/introduction`, description: "Endpoints, request bodies, errors and headers." },
-        { label: "SDKs", href: `${docs}/sdks/typescript`, description: "TypeScript and Python clients with spend limits." },
-        { label: "Agents and MCP", href: `${docs}/agents/mcp`, description: "Connect OpenClaw, Hermes Agent and other MCP clients." },
+      id: "developers",
+      label: "Developers",
+      href: "/developers",
+      match: ["/playground", "/stats"],
+      groups: [
+        {
+          title: "Documentation",
+          links: [
+            { label: "Documentation", href: docs, icon: "book" },
+            { label: "Quickstart", href: `${docs}/quickstart`, icon: "bolt" },
+            { label: "API reference", href: `${docs}/api-reference/introduction`, icon: "braces" },
+            { label: "SDKs", href: `${docs}/sdks/typescript`, icon: "package" },
+            { label: "MCP and agents", href: `${docs}/agents/mcp`, icon: "agent" },
+          ],
+        },
+        {
+          title: "Tools",
+          links: [
+            { label: "Developer hub", href: "/developers", icon: "terminal" },
+            { label: "Playground", href: "/playground", icon: "play" },
+            { label: "Live network", href: "/stats", icon: "pulse" },
+            { label: "llms.txt", href: "/llms.txt", icon: "doc" },
+            { label: "GitHub", href: "https://github.com/hackcat29/moltworld-x402", icon: "github" },
+          ],
+        },
       ],
     },
   ];
 }
+
+/** Plain links that sit next to the menus. */
+export const NAV_LINKS = [
+  { label: "Models", href: "/models" },
+  { label: "Pricing", href: "/pricing" },
+];

@@ -1,78 +1,145 @@
 import type { Context, Hono } from "hono";
 import { config } from "../config.js";
-import { esc, handleCss, handleJs, renderPage } from "./layout.js";
-import { USE_CASES } from "./nav.js";
+import { defaultModelRegistry } from "../models/registry.js";
+import { quoteRequest, type ValidatedRequest } from "../pricing/index.js";
+import { icon } from "./icons.js";
+import { ASSET_NAMES, esc, handleAsset, renderPage } from "./layout.js";
+import { agentTypes, PAYS_LABEL } from "./agents.js";
+import { AUDIENCES, builtIn, PRODUCTS, WORKFLOWS } from "./nav.js";
 import {
   catalog,
+  CatalogEntry,
   catalogScript,
   catalogWidget,
+  codeBlock,
   codeTabs,
   earningsWidget,
+  logo,
+  logoBand,
   mandateLookupWidget,
   marketWidget,
-  modalityCounts,
+  MODALITY_LABEL,
+  modelRails,
+  payConfigScript,
   quoteWidget,
   receiptWidget,
   statsWidget,
+  vendorName,
+  vendors,
 } from "./widgets.js";
+import { mark } from "./brand.js";
 
 const docs = () => config.docsUrl;
 const network = () => (config.isMainnet ? "Algorand Mainnet" : "Algorand Testnet");
+const share = () => 100 - config.marketplaceFeePercent;
+const margin = () => Math.round(config.priceMargin * 100);
+/** Whether this deployment caps mandates on-chain; copy only claims it when it is true. */
+const onChainCap = () => config.mandateCounterAppId !== null;
+const MODALITIES = ["chat", "image", "voice", "video"] as const;
 
-function pageHero(kicker: string, title: string, lede: string, ctas = ""): string {
-  return `
-    <section class="wrap page-hero">
-      <p class="kicker">${esc(kicker)}</p>
-      <h1>${esc(title)}</h1>
-      <p class="lede">${lede}</p>
-      ${ctas ? `<div class="cta-row">${ctas}</div>` : ""}
-    </section>`;
+/** Exact price of a request body for a model, or null when the model is not sold here. */
+function quoteFor(slug: string, request: ValidatedRequest): string | null {
+  const m = defaultModelRegistry.getModel(slug);
+  if (!m || !catalog().some((c) => c.slug === slug)) return null;
+  try {
+    return quoteRequest(m, request).formattedPrice;
+  } catch {
+    return null;
+  }
 }
 
-function block(title: string, intro: string, content: string, id?: string): string {
-  return `
-    <section class="block"${id ? ` id="${id}"` : ""}>
-      <div class="wrap">
-        <div class="head"><h2>${esc(title)}</h2>${intro ? `<p>${intro}</p>` : ""}</div>
-        ${content}
-      </div>
-    </section>`;
+// ---------------------------------------------------------------------------
+// Building blocks
+// ---------------------------------------------------------------------------
+
+const btn = (href: string, label: string, kind: "primary" | "ghost" = "primary") =>
+  `<a class="btn${kind === "ghost" ? " btn-ghost" : ""}" href="${esc(href)}" data-magnetic>${label}${kind === "primary" ? ` ${icon("arrow", 16)}` : ""}</a>`;
+
+const arrowLink = (href: string, label: string) => `<a class="link-arrow" href="${esc(href)}">${label} ${icon("arrow", 16)}</a>`;
+
+/** Section heading, with an optional action on the right instead of a subtitle. */
+function secHead(title: string, action = ""): string {
+  return `<div class="sec-head"><h2 data-split>${title}</h2>${action ? `<div data-reveal>${action}</div>` : ""}</div>`;
 }
 
-function ctaBand(title: string, lede: string): string {
+function pageHero(opts: { title: string; ctas?: string; visual?: string; crumbs?: Array<[string, string]> }): string {
+  const crumbs = opts.crumbs
+    ? `<nav class="crumbs" aria-label="Breadcrumb">${opts.crumbs.map(([l, h]) => `<a href="${esc(h)}">${esc(l)}</a>`).join(`<span aria-hidden="true">/</span>`)}</nav>`
+    : "";
   return `
-    <section class="cta-band">
-      <div class="wrap">
-        <h2>${esc(title)}</h2>
-        <p class="lede">${lede}</p>
-        <div class="cta-row">
-          <a class="btn" href="/playground">Open Playground</a>
-          <a class="btn btn-ghost" href="${docs()}/quickstart">Read the quickstart</a>
+    <section class="page-hero">
+      <div class="wrap page-hero-grid${opts.visual ? "" : " solo"}">
+        <div>
+          ${crumbs}
+          <h1 data-split>${opts.title}</h1>
+          ${opts.ctas ? `<div class="cta-row" data-reveal style="--d:3">${opts.ctas}</div>` : ""}
         </div>
+        ${opts.visual ? `<div class="page-hero-visual" data-reveal style="--d:2">${opts.visual}</div>` : ""}
       </div>
     </section>`;
 }
 
-function linkCards(cards: Array<{ title: string; text: string; href: string; cta?: string }>, cols = 3): string {
+function sec(content: string, opts: { line?: boolean; id?: string } = {}): string {
+  return `
+    <section class="sec${opts.line === false ? "" : " line"}"${opts.id ? ` id="${opts.id}"` : ""}>
+      <div class="wrap">${content}</div>
+    </section>`;
+}
+
+function ctaFinal(title: string, ctas?: string): string {
+  return `
+    <section class="cta-final">
+      <div class="orbit-deco" data-clip aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="wrap">
+        <h2 data-split>${title}</h2>
+        <div class="cta-row" data-reveal style="--d:2">${ctas ?? `${btn("/playground", "Open Playground")}${btn(`${docs()}/quickstart`, "Quickstart", "ghost")}`}</div>
+      </div>
+    </section>`;
+}
+
+/** Facts, each one sentence that stands on its own. */
+function facts(items: Array<[string, string]>): string {
+  return `<ul class="facts">${items.map(([ic, text], i) => `<li data-reveal style="--d:${i % 3}">${icon(ic, 22)}<span>${text}</span></li>`).join("")}</ul>`;
+}
+
+function linkCards(cards: Array<{ title: string; href: string; icon?: string }>, cols: 2 | 3 = 3): string {
   return `<div class="grid-${cols}">${cards
     .map(
-      (c) =>
-        `<a class="card" href="${esc(c.href)}"><h3>${esc(c.title)}</h3><p>${esc(c.text)}</p><span class="more-link">${esc(c.cta ?? "Learn more")}</span></a>`
+      (c, i) =>
+        `<a class="card link-card" href="${esc(c.href)}" data-reveal data-tilt style="--d:${i % 3}">${c.icon ? `<span class="card-ic">${icon(c.icon, 20)}</span>` : ""}<h3>${esc(c.title)}</h3><span class="go">${icon("arrow", 16)}</span></a>`
     )
     .join("")}</div>`;
 }
 
-const PAYMENT_STEPS = `
-      <ol class="steps">
-        <li><strong>Send the request</strong>Invalid input gets a 400 and costs nothing. A valid request gets a 402 with the price for that exact request.</li>
-        <li><strong>Sign one transfer</strong>Your wallet signs a USDC transfer for that amount. The facilitator pays the network fee, so you don't need ALGO.</li>
-        <li><strong>Get the result</strong>Chat is charged after the answer is ready. Image, voice and video are charged first and refunded if the model fails.</li>
-        <li><strong>Keep the receipt</strong>Every response has a signed receipt with the transaction id and hashes of your request and the response.</li>
-      </ol>`;
+const stepsList = (steps: string[]) => `<ol class="steps">${steps.map((t, i) => `<li style="--d:${i}"><strong>${t}</strong></li>`).join("")}</ol>`;
+
+const PAYMENT_STEPS = [
+  "Send a request. Get a 402 with its exact price.",
+  "Sign one USDC transfer. No ALGO needed.",
+  "Get the result. Failed media is refunded.",
+  "Keep the signed receipt.",
+];
 
 function snippets(model = "gpt-4o") {
   const origin = config.publicDomain;
   return {
+    mcp: `{
+  "mcpServers": {
+    "moltworld": {
+      "command": "npx",
+      "args": ["-y", "-p", "@moltworld/sdk", "moltworld-mcp"],
+      "env": { "MOLTWORLD_MANDATE": "<credential>", "MOLTWORLD_BUDGET_USD": "5" }
+    }
+  }
+}
+
+// The agent now has moltworld_chat, moltworld_image, moltworld_speech,
+// moltworld_video and moltworld_quote, and pays within the mandate.`,
+    claude: `claude mcp add -e MOLTWORLD_MANDATE=<credential> -e MOLTWORLD_BUDGET_USD=5 \\
+  moltworld -- npx -y -p @moltworld/sdk moltworld-mcp
+
+# Discovery and quotes only, no wallet:
+claude mcp add --transport http moltworld-remote ${origin}/mcp`,
     ts: `import { MoltworldClient } from "@moltworld/sdk";
 
 const client = new MoltworldClient({
@@ -108,78 +175,255 @@ curl -si ${origin}/v1/models/${model}/chat/completions \\
 }
 
 // ---------------------------------------------------------------------------
+// Product demos (animated by site.js)
+// ---------------------------------------------------------------------------
+
+function termDemo(models: CatalogEntry[]): string {
+  const m = models.find((x) => x.slug === "gpt-4o") ?? models.find((x) => x.modality === "chat") ?? models[0];
+  const slug = m?.slug ?? "gpt-4o";
+  const price = m?.from ?? "$0.003";
+  return `<div class="term" data-term>
+      <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="term-body"><span class="l t-cmd" data-wait="300">POST /v1/models/${esc(slug)}/chat/completions</span><span class="l t-402">&larr; 402 Payment Required &middot; ${esc(price)} USDC</span><span class="l t-cmd" data-wait="900">retry with Payment-Signature</span><span class="l t-ok">&larr; 200 OK &middot; settled on Algorand</span><span class="l t-ok">&larr; Moltworld-Receipt &check;</span><span class="l" data-wait="200"><span class="caret"></span></span></div>
+    </div>`;
+}
+
+function meterDemo(): string {
+  return `<div class="meter" data-meter data-reveal data-cap="5">
+      <div class="meter-top"><span>Spent today</span><b data-spent>$0.00</b></div>
+      <div class="meter-bar">${"<i></i>".repeat(20)}</div>
+      <div class="limits"><span class="limit">per call <b>$0.25</b></span><span class="limit">daily cap <b>$5.00</b></span><span class="limit">expires <b>30 days</b></span></div>
+      <div class="meter-actions"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Mandate active"></button><span data-state>active</span></div>
+    </div>`;
+}
+
+function splitDemo(): string {
+  const s = share();
+  const dash = ((2 * Math.PI * 58 * s) / 100).toFixed(1);
+  return `<div class="split-wrap" data-reveal>
+      <svg class="split-ring" viewBox="0 0 150 150" role="img" aria-label="${s}% of each sale goes to the API seller"><circle class="bg" cx="75" cy="75" r="58"/><circle class="fg" cx="75" cy="75" r="58" style="--dash:${dash}"/><text x="75" y="84" text-anchor="middle">${s}%</text></svg>
+      <div class="split-legend"><span><i></i>You</span><span><i class="o"></i>Moltworld, ${config.marketplaceFeePercent}%</span></div>
+    </div>`;
+}
+
+function receiptDemo(): string {
+  return `<div class="rcpt" data-receipt data-reveal>
+      <div class="rcpt-row"><span>model</span><span>claude-sonnet-5</span></div>
+      <div class="rcpt-row"><span>upstream</span><span>openrouter / anthropic</span></div>
+      <div class="rcpt-row"><span>requestSha256</span><span data-scramble="9f2c41d07be3a85e">9f2c41d07be3a85e</span></div>
+      <div class="rcpt-row"><span>responseSha256</span><span data-scramble="4ab7e0c93d1f6528">4ab7e0c93d1f6528</span></div>
+      <div class="rcpt-row"><span>sig</span><span data-scramble="e1d8a05c7f3b9264">e1d8a05c7f3b9264</span></div>
+      <span class="stamp">${icon("check", 14)} verified</span>
+    </div>`;
+}
+
+function chatDemo(models: CatalogEntry[]): string {
+  const video = models.find((m) => m.slug === "veo-3.1-fast") ?? models.find((m) => m.modality === "video");
+  const slug = video?.slug ?? "veo-3.1-fast";
+  const durations = video?.durations ?? [6];
+  const dur = durations.includes(6) ? 6 : durations[0];
+  const price = quoteFor(slug, { prompt: "Product teaser", duration: dur } as ValidatedRequest) ?? video?.from ?? "a few cents";
+  return `<div class="chat" data-chat data-reveal>
+      <div class="chat-head">Example session</div>
+      <div class="msg user" data-step data-wait="300">Make a ${dur}-second teaser for tomorrow's launch.</div>
+      <div class="tool" data-step><span class="fn">moltworld_quote</span>({ model: "${esc(slug)}", duration: ${dur} })<br>&rarr; ${esc(price)} USDC</div>
+      <div class="tool" data-step data-wait="900"><span class="fn">moltworld_video</span>({ model: "${esc(slug)}", prompt: "&hellip;" })<br>&rarr; <span class="ok">paid</span> &middot; job queued</div>
+      <div class="tool" data-step data-wait="1100">receipt &middot; <span class="ok">signature valid</span> &middot; ${esc(network())}</div>
+      <div class="msg bot" data-step>Done for ${esc(price)}. Clip and receipt attached.</div>
+      <div class="typing hidden" aria-hidden="true"><i></i><i></i><i></i></div>
+    </div>`;
+}
+
+const WORLD_FALLBACK = `<svg viewBox="0 0 400 400" aria-hidden="true" fill="none" stroke="currentColor" style="color:var(--line-2)"><circle cx="200" cy="200" r="150"/><ellipse cx="200" cy="200" rx="60" ry="150"/><ellipse cx="200" cy="200" rx="115" ry="150"/><path d="M50 200h300M70 125h260M70 275h260"/><ellipse cx="200" cy="200" rx="190" ry="54" transform="rotate(-18 200 200)" stroke-dasharray="3 6"/><circle cx="352" cy="148" r="6" fill="var(--signal)" stroke="none"/></svg>`;
+
+function flowBand(): string {
+  const left = Array.from({ length: 9 }, (_, i) => { const y = 30 + i * 42.5; return `<path class="in" d="M0 ${y} C 260 ${y}, 360 200, 500 200"/>`; }).join("");
+  const lanes = [70, 155, 245, 330];
+  const right = lanes.map((y, i) => `<path class="out o${i}" d="M500 200 C 640 200, 700 ${y}, 1000 ${y}"/>`).join("");
+  return `<div class="flow" data-reveal>
+      <svg class="flow-fallback" viewBox="0 0 1000 400" preserveAspectRatio="none" aria-hidden="true">${left}${right}</svg>
+      <canvas id="flow" role="img" aria-label="Requests pass through the x402 gate and fan out to chat, image, voice and video models"></canvas>
+      <span class="flow-gate" aria-hidden="true"></span>
+      <span class="flow-label c" aria-hidden="true">x402</span>
+      <div class="flow-lanes" aria-hidden="true">${(["video", "voice", "image", "chat"] as const)
+        .map((k, i) => `<span style="top:${(18.5 + i * 21).toFixed(1)}%">${MODALITY_LABEL[k]}<i style="background:var(--${k})"></i></span>`)
+        .join("")}</div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Home
 // ---------------------------------------------------------------------------
 
 function home(c: Context) {
   const models = catalog();
-  const counts = modalityCounts(models);
   const s = snippets();
   const body = `
-    <section class="wrap hero">
-      <div class="hero-split">
-        <div>
-          <h1>AI models, paid per request in USDC</h1>
-          <p class="lede">One API for ${models.length || "chat, image, voice and video"}${models.length ? " chat, image, voice and video models" : " models"}. Each call is paid with a single USDC transfer on Algorand through x402. No account, no API key, no subscription.</p>
-          <div class="cta">
-            <a class="btn" href="/playground">Open Playground</a>
-            <a class="btn btn-ghost" href="${docs()}/quickstart">Read the docs</a>
-          </div>
-          <div class="hero-meta">
-            <span><strong>${counts.chat}</strong> chat</span><span><strong>${counts.image}</strong> image</span>
-            <span><strong>${counts.voice}</strong> voice</span><span><strong>${counts.video}</strong> video</span>
-            <span>Settled on <strong>${network()}</strong></span>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <h1 data-split>Every AI model, <em>paid per request.</em></h1>
+          <div class="cta-row" data-reveal style="--d:4">
+            ${btn("/playground", "Open Playground")}
+            <span class="cmd"><b>npm i @moltworld/sdk</b><button type="button" class="icon-btn" data-copy="npm i @moltworld/sdk" aria-label="Copy install command">${icon("copy", 15)}</button></span>
           </div>
         </div>
-        ${codeTabs("hero", [["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]])}
+        <div class="hero-visual" data-clip>
+          <div class="world-fallback">${WORLD_FALLBACK}</div>
+          <canvas id="world" role="img" aria-label="Globe of payments settling between agents and models. Drag to spin, tap to send a request."></canvas>
+        </div>
       </div>
     </section>
 
-    <section class="block tight">
-      <div class="wrap">
-        <p class="note" style="margin:0 0 14px">Models from</p>
-        <div class="providers"><span>OpenAI</span><span>Anthropic</span><span>Google</span><span>Meta</span><span>DeepSeek</span><span>xAI</span><span>Alibaba</span><span>ByteDance</span><span>Black Forest Labs</span><span>Kling</span><span>MiniMax</span><span>Recraft</span><span>ElevenLabs</span></div>
+    ${logoBand(models)}
+
+    ${sec(`
+      ${secHead("AI is sold by the seat. <em>Agents don't have seats.</em>")}
+      <ul class="problems">
+        <li data-reveal>Whoever holds a key spends the account.</li>
+        <li data-reveal style="--d:1">Credits and plans are prepaid to the provider.</li>
+        <li data-reveal style="--d:2">Dashboards can't prove what ran.</li>
+      </ul>
+      <p class="answer" data-reveal>Moltworld prices every request with HTTP 402. <em>Anything with a wallet can pay.</em></p>
+    `)}
+
+    ${sec(`
+      ${secHead("Three products. <em>Proof on every call.</em>", arrowLink("/products", "All products"))}
+      <div class="bento">
+        <a class="tile wide" href="/products/gateway" data-reveal>
+          <div class="tile-head"><h3>Gateway</h3><span class="go">${icon("arrow", 16)}</span></div>
+          <div class="tile-visual">${termDemo(models)}</div>
+        </a>
+        <a class="tile narrow" href="/products/mandates" data-reveal style="--d:1">
+          <div class="tile-head"><h3>Mandates</h3><span class="go">${icon("arrow", 16)}</span></div>
+          <div class="tile-visual">${meterDemo()}</div>
+        </a>
+        <a class="tile narrow" href="/products/marketplace" data-reveal>
+          <div class="tile-head"><h3>Marketplace</h3><span class="go">${icon("arrow", 16)}</span></div>
+          <div class="tile-visual">${splitDemo()}</div>
+        </a>
+        <a class="tile wide" href="/products/receipts" data-reveal style="--d:1">
+          <div class="tile-head"><h3>Receipts</h3><span class="go">${icon("arrow", 16)}</span></div>
+          <div class="tile-visual">${receiptDemo()}</div>
+        </a>
       </div>
-    </section>
+    `)}
 
-    ${block(
-      "Everything you need to pay for AI per call",
-      "Use the gateway on its own, or add mandates, the marketplace and receipts as you need them.",
-      linkCards(
-        [
-          { title: "Gateway", text: "Chat, image, voice and video behind one HTTP API. Priced from each request at upstream cost plus a published margin.", href: "/products/gateway" },
-          { title: "Mandates", text: "Let an agent pay from your wallet with a per-call limit, a daily cap and an expiry. Revoke it at any time.", href: "/products/mandates" },
-          { title: "Marketplace", text: "Sell your own API through the same checkout. You keep 85% of every call.", href: "/products/marketplace" },
-          { title: "Receipts", text: "A signed record of every paid call: what was paid, which model answered, and hashes of the request and response.", href: "/products/receipts" },
-        ],
-        2
-      )
-    )}
+    ${sec(`
+      ${secHead("Request to receipt <em>in one round trip.</em>")}
+      ${flowBand()}
+      ${stepsList(PAYMENT_STEPS)}
+    `)}
 
-    ${block("How payment works", "Standard HTTP 402 using the x402 protocol. Any x402 client that supports Algorand can pay.", PAYMENT_STEPS)}
+    ${sec(`
+      ${secHead("Every model. <em>Priced per call.</em>", arrowLink("/models", "All models"))}
+      <div class="mod-row">
+        ${MODALITIES.map(
+          (k, i) =>
+            `<a class="mod dot-${k}" href="/models?type=${k}" data-reveal style="--d:${i}"><div class="k"><i></i>${MODALITY_LABEL[k]}</div><div class="lab-stack">${vendors(models.filter((m) => m.modality === k)).slice(0, 4).map((v) => `<span title="${esc(vendorName(v))}">${logo(v)}</span>`).join("")}</div><div class="bars" aria-hidden="true">${[0, 1, 2, 3].map((j) => `<b style="--j:${j + i}"></b>`).join("")}</div></a>`
+        ).join("")}
+      </div>
+    `)}
+    <div class="rails-band">${modelRails(models)}</div>
 
-    ${block(
-      "Built for agents",
-      "Agents can't sign up for accounts or manage API keys safely. They can pay per call, within limits you set.",
-      linkCards(
-        [
-          { title: "OpenClaw and Hermes Agent", text: "Add Moltworld as an MCP server. The agent quotes, pays and gets receipts on its own.", href: "/solutions/agents" },
-          { title: "Spending allowance", text: "Give an always-on agent a capped, revocable budget for the models it doesn't have.", href: "/use-cases/agent-allowance" },
-          { title: "Agent-to-agent commerce", text: "List your agent's skill as a paid API that other agents can call.", href: "/use-cases/agent-commerce" },
-        ],
-        3
-      )
-    )}
+    ${sec(`
+      <div class="agent-grid">
+        <div>
+          <h2 data-split>Built for software <em>that spends money.</em></h2>
+          <ul class="feature-list" data-reveal>
+            <li>${icon("plug", 20)}<b>Remote and local MCP servers</b></li>
+            <li>${icon("mandate", 20)}<b>Mandates bound to the agent's own key</b></li>
+            <li>${icon("globe", 20)}<b>A2A agent card and llms.txt</b></li>
+          </ul>
+          <div class="cta-row" data-reveal>${btn("/solutions/agents", "Connect your agent")}${btn(`${docs()}/agents/mcp`, "MCP docs", "ghost")}</div>
+        </div>
+        ${chatDemo(models)}
+      </div>
+    `)}
 
-    ${block("Usage", `From the gateway ledger. <a href="/stats">See all usage</a>.`, statsWidget())}
+    ${sec(`
+      <div class="dev-grid">
+        <div>
+          <h2 data-split>One config for agents. <em>A few lines for apps.</em></h2>
+          <div class="sdk-list" data-reveal>
+            <a class="sdk" href="${docs()}/agents/mcp">${icon("plug", 20)}<b>MCP servers</b>${icon("arrow", 16)}</a>
+            <a class="sdk" href="${docs()}/sdks/typescript">${icon("package", 20)}<b>TypeScript SDK</b>${icon("arrow", 16)}</a>
+            <a class="sdk" href="${docs()}/sdks/python">${icon("package", 20)}<b>Python SDK</b>${icon("arrow", 16)}</a>
+            <a class="sdk" href="${docs()}/api-reference/introduction">${icon("braces", 20)}<b>HTTP API reference</b>${icon("arrow", 16)}</a>
+          </div>
+        </div>
+        <div data-reveal style="--d:2">${codeTabs("hero", [["mcp", "MCP", s.mcp, "json"], ["claude", "Claude Code", s.claude, "sh"], ["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]])}</div>
+      </div>
+    `)}
 
-    ${ctaBand("Price a request in seconds", "Pick a model, write a request and see the exact price and the 402 response. Nothing is charged.")}`;
+    ${sec(`
+      ${secHead("A wallet <em>instead of an account.</em>")}
+      <div class="compare" data-reveal role="table" aria-label="Moltworld compared with API keys and plans">
+        <div class="compare-row head" role="row"><div role="columnheader"></div><div class="us" role="columnheader">Moltworld</div><div role="columnheader">API keys and plans</div></div>
+        ${[
+          ["Sign-up", "None. A wallet is enough", "An account per provider"],
+          ["Your money", "In your wallet until each call settles", "Prepaid to the provider, or billed later"],
+          ["Spending limits enforced by", "Algorand, plus the gateway", "The provider's servers"],
+          ["A leaked credential", "Can't pay without the agent's own key", "Spends up to the key's limit"],
+          ["If the provider is compromised", "Can't take more than each call's on-chain cap", "Your balance is at its discretion"],
+          ["Failed generations", "Free or refunded on-chain", "Depends on the provider"],
+          ["Proof of each call", "Signed receipt and on-chain settlement", "Usage logs"],
+          ["Selling your API", `Built in, ${share()}% to you`, "Build billing yourself"],
+        ]
+          .map(([k, us, them]) => `<div class="compare-row" role="row"><div role="rowheader">${k}</div><div class="us" role="cell">${icon("check", 16)}${us}</div><div role="cell">${them}</div></div>`)
+          .join("")}
+      </div>
+    `)}
+
+    ${sec(`
+      ${secHead("Every number <em>is on-chain.</em>", arrowLink("/stats", "Live network"))}
+      ${statsWidget()}
+    `)}
+
+    ${sec(`
+      ${secHead("Every kind of agent. <em>One wallet.</em>", arrowLink("/use-cases", "All use cases"))}
+      <div class="rail" data-reveal>
+        ${agentTypes().map((t) => agentCard(t)).join("")}
+      </div>
+    `)}
+
+    ${sec(faq())}
+
+    ${ctaFinal("Stop managing keys. <em>Pay per call.</em>")}`;
   return renderPage(c, {
     path: "/",
-    title: "Moltworld | Multimodal AI Gateway with x402 on Algorand",
-    description: "AI models for apps and agents, paid per request in USDC on Algorand through x402. No account or API key. Signed receipts and automatic refunds.",
+    title: "Moltworld | Every AI model, paid per request",
+    description: `The pay-per-request gateway for AI. Every chat, image, voice and video model, paid per call in USDC on Algorand through x402. No accounts, no API keys, signed receipts.`,
     body,
+    data: catalogScript(models),
   });
+}
+
+function faq(): string {
+  const qa: Array<[string, string]> = [
+    ["Do I need an account or ALGO?", "No. You need a wallet with USDC on Algorand. The x402 facilitator pays the network fee, and there is nothing to sign up for."],
+    ["How is a request priced?", `From the request itself: input tokens plus <code>max_tokens</code> for chat, images, characters or seconds for media, at the upstream's live rate plus a ${margin()}% margin (minimum $${config.priceMinFloor}). <code>POST /v1/quote</code> returns the same price for free.`],
+    ["What if a model fails?", "Chat settles only after the answer exists. Image, voice and video settle first and are refunded on-chain automatically if the model fails, or if a video job doesn't finish."],
+    ["Am I charged for unused tokens?", "Chat is authorized for its full <code>max_tokens</code> budget. The part the model didn't use is credited back and paid out in USDC."],
+    ["Which clients can pay?", "Any x402 client that supports Algorand's exact scheme, the TypeScript and Python SDKs, or an agent through the remote or local MCP server."],
+    [
+      "How do agents spend safely?",
+      `With a mandate: a small Algorand program that can only pay Moltworld, only up to a per-call limit, only until it expires, and only with a signature from the agent's own key, which never leaves the agent. ${
+        onChainCap() ? "Its daily cap is enforced on-chain by an immutable spend counter. The gateway adds" : "The gateway adds a daily cap,"
+      } a model list and instant revocation.`,
+    ],
+    [
+      "How is a mandate different from an API key with a limit?",
+      `An API key is a bearer secret to a balance the provider holds, and its limits live in the provider's database. A mandate leaves the money in your wallet, its per-call cap, payee and expiry${
+        onChainCap() ? ", and its daily cap," : ""
+      } are enforced by Algorand, and the credential is useless without the agent's key. Every call settles on-chain with a signed receipt.`,
+    ],
+    ["Is it open source?", `Yes. The gateway, SDKs and docs are MIT licensed on <a href="https://github.com/hackcat29/moltworld-x402">GitHub</a>.`],
+  ];
+  return `<div class="faq">
+      <h2 data-split>Questions.</h2>
+      <div data-reveal>${qa.map(([q, a], i) => `<details class="qa"${i === 0 ? " open" : ""}><summary>${q}</summary><div class="ans"><p>${a}</p></div></details>`).join("")}</div>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,172 +431,189 @@ function home(c: Context) {
 // ---------------------------------------------------------------------------
 
 function products(c: Context) {
+  const models = catalog();
+  const visual: Record<string, string> = { "/products/gateway": termDemo(models), "/products/mandates": meterDemo(), "/products/marketplace": splitDemo() };
+  const claim: Record<string, string> = {
+    "/products/gateway": "One API for every model, <em>paid per call.</em>",
+    "/products/mandates": "Budgets agents <em>can't exceed.</em>",
+    "/products/marketplace": `Sell your API per call. <em>Keep ${share()}%.</em>`,
+  };
+  const [receiptsLink, refundsLink] = builtIn();
   const body = `
-    ${pageHero("Products", "Pay-per-request infrastructure for AI", "Four pieces that work together: the gateway sells model calls, mandates let agents pay, the marketplace lets you sell, and receipts prove what happened.")}
-    <section class="wrap" style="padding-bottom:72px">
-      ${linkCards(
-        [
-          { title: "Gateway", text: "One API for chat, image, voice and video models, priced per request.", href: "/products/gateway" },
-          { title: "Models", text: "The full catalog with upstream ids, limits and prices.", href: "/models", cta: "Browse models" },
-          { title: "Mandates", text: "Delegated spending for agents, limited on-chain and by the gateway.", href: "/products/mandates" },
-          { title: "Marketplace", text: "Sell your own API to apps and agents, paid in USDC.", href: "/products/marketplace" },
-          { title: "Receipts", text: "Verify any paid call against our published signing key.", href: "/products/receipts" },
-        ],
-        3
-      )}
-    </section>
-    ${ctaBand("See it work", "The Playground shows the exact price and the 402 response for any request.")}`;
-  return renderPage(c, { path: "/products", title: "Products", description: "Moltworld gateway, mandates, marketplace and receipts.", body });
+    ${pageHero({ title: "The payment layer <em>for AI.</em>", ctas: `${btn("/playground", "Open Playground")}${btn("/models", "Models", "ghost")}` })}
+    <section><div class="wrap">
+      ${PRODUCTS.map(
+        (p) => `<div class="prow">
+          <div data-reveal><h2>${claim[p.href]}</h2>${arrowLink(p.href, esc(p.label))}</div>
+          <div class="prow-visual" data-reveal style="--d:1">${visual[p.href]}</div>
+        </div>`
+      ).join("")}
+    </div></section>
+    ${sec(`
+      ${secHead("Built into <em>every call.</em>")}
+      <div class="grid-2">
+        <div data-reveal>${receiptDemo()}</div>
+        ${facts([
+          ["receipt", `A <a href="${receiptsLink.href}">signed receipt</a> ties the payment to the exact request and response.`],
+          ["refund", `Failed media is <a href="${refundsLink.href}">refunded on-chain</a>.`],
+          ["wallet", "Unused chat tokens are paid back in USDC."],
+          ["shield", "Retries never charge twice."],
+        ])}
+      </div>
+    `)}
+    ${ctaFinal("See it work <em>in seconds.</em>")}`;
+  return renderPage(c, { path: "/products", title: "Products", description: "Moltworld's products: the gateway, mandates for agents and the marketplace, with signed receipts, refunds and rebates built into every call.", body });
 }
 
 function gateway(c: Context) {
   const models = catalog();
-  const counts = modalityCounts(models);
   const s = snippets();
   const body = `
-    ${pageHero(
-      "Gateway",
-      "One API for every model, paid per call",
-      `${models.length} models from ${counts.chat ? "OpenRouter, fal.ai, OpenAI and ElevenLabs" : "leading providers"}, behind OpenAI-style request bodies. You pay for each call in USDC; there's nothing to sign up for.`,
-      `<a class="btn" href="/playground">Open Playground</a><a class="btn btn-ghost" href="/models">Browse models</a>`
-    )}
-    ${block(
-      "Priced from the request itself",
-      "",
-      `<div class="grid-2">
-        <ul class="checks">
-          <li><strong>Exact quotes.</strong> The price comes from what you send: input tokens and max_tokens for chat, images, characters or seconds. <code>POST /v1/quote</code> returns it for free.</li>
-          <li><strong>Cost plus a published margin.</strong> Chat rates follow OpenRouter's live price list. The margin is ${Math.round(config.priceMargin * 100)}%, with a minimum of $${config.priceMinFloor} per call.</li>
-          <li><strong>Pay only for what works.</strong> Chat is charged after the answer is ready. Image, voice and video are charged first and refunded on-chain if the model fails.</li>
-          <li><strong>Unused tokens paid back.</strong> Chat is charged for its max_tokens budget. The part you don't use is credited and paid out in USDC.</li>
-          <li><strong>Safe retries.</strong> Send the same payment again after a dropped connection and you get the original response. You're never charged twice.</li>
-        </ul>
-        ${codeTabs("gw", [["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]])}
-      </div>`
-    )}
-    ${block(
-      "What you can call",
-      "",
-      `<div class="table-wrap"><table class="stack">
+    ${pageHero({
+      crumbs: [["Product", "/products"]],
+      title: "One API for every model, <em>paid per call.</em>",
+      ctas: `${btn("/playground", "Open Playground")}${btn("/models", "Models", "ghost")}`,
+      visual: termDemo(models),
+    })}
+    ${sec(`
+      ${secHead("Priced from <em>the request itself.</em>", arrowLink("/pricing", "Pricing"))}
+      ${facts([
+        ["tag", "Every request is quoted from what you send. <code>POST /v1/quote</code> is free."],
+        ["layers", `Upstream cost plus ${margin()}%, minimum $${config.priceMinFloor} per call.`],
+        ["refund", "Chat is charged after the answer. Failed media is refunded on-chain."],
+        ["wallet", "Unused chat tokens are paid back in USDC."],
+        ["shield", "Retrying a payment returns the original response, never a second charge."],
+        ["users", "Parallel calls can't spend more than the wallet holds."],
+      ])}
+    `)}
+    ${sec(`
+      ${secHead("Endpoints.")}
+      <div class="table-wrap" data-reveal><table class="stack">
         <thead><tr><th>Type</th><th>Endpoint</th><th>Priced by</th><th>Charged</th></tr></thead>
         <tbody>
-          <tr><td data-label="Type">Chat (${counts.chat})</td><td data-label="Endpoint"><code>/v1/models/{model}/chat/completions</code></td><td data-label="Priced by">Input tokens + max_tokens</td><td data-label="Charged">After the answer</td></tr>
-          <tr><td data-label="Type">Image (${counts.image})</td><td data-label="Endpoint"><code>/v1/models/{model}/images/generations</code></td><td data-label="Priced by">Number of images</td><td data-label="Charged">First, refunded on failure</td></tr>
-          <tr><td data-label="Type">Voice (${counts.voice})</td><td data-label="Endpoint"><code>/v1/models/{model}/audio/speech</code></td><td data-label="Priced by">Characters</td><td data-label="Charged">First, refunded on failure</td></tr>
-          <tr><td data-label="Type">Video (${counts.video})</td><td data-label="Endpoint"><code>/v1/models/{model}/videos/generations</code></td><td data-label="Priced by">Seconds of video</td><td data-label="Charged">First, refunded if the job fails</td></tr>
+          <tr><td data-label="Type">Chat</td><td data-label="Endpoint"><code>/v1/models/{model}/chat/completions</code></td><td data-label="Priced by">Input tokens + max_tokens</td><td data-label="Charged">After the answer</td></tr>
+          <tr><td data-label="Type">Image</td><td data-label="Endpoint"><code>/v1/models/{model}/images/generations</code></td><td data-label="Priced by">Images</td><td data-label="Charged">First, refunded on failure</td></tr>
+          <tr><td data-label="Type">Voice</td><td data-label="Endpoint"><code>/v1/models/{model}/audio/speech</code></td><td data-label="Priced by">Characters</td><td data-label="Charged">First, refunded on failure</td></tr>
+          <tr><td data-label="Type">Video</td><td data-label="Endpoint"><code>/v1/models/{model}/videos/generations</code> &rarr; <code>/v1/jobs/{id}</code></td><td data-label="Priced by">Seconds</td><td data-label="Charged">First, refunded if the job fails</td></tr>
         </tbody></table></div>
-        <p class="note" style="margin-top:12px">Video returns a job id. Poll <code>GET /v1/jobs/{id}</code> for the video URL.</p>`
-    )}
-    ${block("How payment works", "", PAYMENT_STEPS)}
-    ${ctaBand("Try a model", "See the exact price for your request before you pay anything.")}`;
+    `)}
+    ${sec(`<div class="dev-grid"><h2 data-split>Start <em>in a few lines.</em></h2><div data-reveal>${codeTabs("gw", [["mcp", "MCP", s.mcp, "json"], ["claude", "Claude Code", s.claude, "sh"], ["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]])}</div></div>`)}
+    ${sec(`${secHead("How a call <em>gets paid.</em>")}${flowBand()}${stepsList(PAYMENT_STEPS)}`)}
+    ${ctaFinal("Try a model <em>now.</em>")}`;
   return renderPage(c, { path: "/products/gateway", title: "Gateway", description: "One API for chat, image, voice and video models, paid per request in USDC through x402.", body });
 }
 
 function modelsPage(c: Context) {
   const models = catalog();
+  const vs = vendors(models).slice(0, 10);
+  const orbit = `<div class="orbit3d" data-clip aria-hidden="true">
+      <div class="core">${mark(54)}</div>
+      <div class="ring">${vs.map((v, i) => `<span class="node" style="--a:${((360 / vs.length) * i).toFixed(1)}deg" title="${esc(vendorName(v))}">${logo(v)}</span>`).join("")}</div>
+    </div>`;
   const body = `
-    ${pageHero(
-      "Models",
-      "Every model, its upstream and its price",
-      "Each model is listed under the provider and model id that serves it. If a provider can't confirm a model exists, we don't sell it. Prices shown are for a small request; the Playground prices yours exactly.",
-      `<a class="btn" href="/playground">Open Playground</a><a class="btn btn-ghost" href="/v1/models">Catalog as JSON</a>`
-    )}
-    <section class="wrap" style="padding-bottom:72px">${catalogWidget(models)}</section>`;
-  return renderPage(c, { path: "/models", title: "Models", description: "Moltworld model catalog with upstream ids, limits and per-request prices.", body });
+    ${pageHero({
+      title: "Every model, <em>priced per request.</em>",
+      ctas: `${btn("/playground", "Open Playground")}${btn("/v1/models", "Catalog JSON", "ghost")}`,
+      visual: orbit,
+    })}
+    <section class="sec" style="padding-top:48px"><div class="wrap">${catalogWidget(models)}</div></section>
+    ${ctaFinal("Price your <em>exact request.</em>")}`;
+  return renderPage(c, { path: "/models", title: "Models", description: "Moltworld model catalog with upstream ids, limits and per-request prices. Models a provider can't confirm are not sold.", body });
 }
 
 function mandates(c: Context) {
   const origin = config.publicDomain;
   const body = `
-    ${pageHero(
-      "Mandates",
-      "Let an agent spend from your wallet, within limits",
-      "A mandate lets an agent pay for model calls from your account without ever holding your key. You set the limits once; the Algorand protocol and the gateway enforce them.",
-      `<a class="btn" href="${docs()}/products/mandates">Create a mandate</a><a class="btn btn-ghost" href="/use-cases/agent-allowance">See the use case</a>`
-    )}
-    ${block(
-      "Who enforces what",
-      "",
-      `<div class="table-wrap"><table class="stack">
-        <thead><tr><th>Limit</th><th>Enforced by</th><th>Can it change later?</th></tr></thead>
-        <tbody>
-          <tr><td data-label="Limit">Only pays Moltworld, only in USDC</td><td data-label="Enforced by">Algorand (the program itself)</td><td data-label="Can it change?">No</td></tr>
-          <tr><td data-label="Limit">Maximum per call</td><td data-label="Enforced by">Algorand</td><td data-label="Can it change?">No</td></tr>
-          <tr><td data-label="Limit">Expiry</td><td data-label="Enforced by">Algorand</td><td data-label="Can it change?">No</td></tr>
-          <tr><td data-label="Limit">Daily cap</td><td data-label="Enforced by">Moltworld gateway</td><td data-label="Can it change?">Set at registration</td></tr>
-          <tr><td data-label="Limit">Allowed models</td><td data-label="Enforced by">Moltworld gateway</td><td data-label="Can it change?">Set at registration</td></tr>
-          <tr><td data-label="Limit">Revocation</td><td data-label="Enforced by">Moltworld gateway</td><td data-label="Can it change?">Final once revoked</td></tr>
-        </tbody></table></div>
-        <p class="note" style="margin-top:12px">Because the program can only pay Moltworld, revoking a mandate on the gateway stops all spending under it.</p>`
-    )}
-    ${block(
-      "Create one in a few lines",
-      "The SDK checks the program against your limits before you sign it, so you never sign something you didn't ask for.",
-      `<div class="grid-2">
-        ${codeTabs("mandate", [
+    ${pageHero({
+      crumbs: [["Product", "/products"]],
+      title: "Let an agent spend, <em>within limits.</em>",
+      ctas: `${btn(`${docs()}/products/mandates`, "Create a mandate")}${btn("/use-cases/agent-allowance", "Use case", "ghost")}`,
+      visual: meterDemo(),
+    })}
+    ${sec(`
+      ${secHead("Two layers <em>of enforcement.</em>")}
+      <div class="split-table">
+        <div class="enforce" data-reveal><h3>${icon("shield", 20)} Algorand</h3><ul><li>Pays only Moltworld, only USDC</li><li>Maximum per call</li><li>Co-signed by the agent's own key</li>${onChainCap() ? "<li>Daily cap, by the spend counter</li>" : ""}<li>Zero fee, no rekey, expiry round</li></ul></div>
+        <div class="enforce" data-reveal style="--d:1"><h3>${icon("gateway", 20)} Gateway</h3><ul><li>${onChainCap() ? "Rolling 24-hour cap, a second check" : "Rolling 24-hour cap"}</li><li>Allowed models</li><li>Instant revocation</li><li>Spend per mandate</li></ul></div>
+      </div>
+    `)}
+    ${sec(`
+      ${secHead("Create one <em>in a few lines.</em>")}
+      <div class="grid-2">
+        <div data-reveal>${codeTabs("mandate", [
+          [
+            "key",
+            "1. Agent key",
+            `# On the agent's machine. The key stays there; only the address is shared.
+npx -y -p @moltworld/sdk moltworld-mcp keygen
+# -> AGENTADDRESS...   (saved to ~/.moltworld/agent.key)`,
+            "sh",
+          ],
           [
             "owner",
-            "Owner",
+            "2. Owner",
             `import algosdk from "algosdk";
 import { createMandate } from "@moltworld/sdk";
 
 const owner = algosdk.mnemonicToSecretKey(process.env.OWNER_MNEMONIC);
+// The SDK checks the program against these limits before you sign it.
 const { mandateId, credential } = await createMandate("${origin}", owner, {
+  agent: "AGENTADDRESS...", // every payment must be co-signed by this key
   maxPerCallUsd: 0.25,
   dailyCapUsd: 5,
   validDays: 30,
   allowedModels: ["gpt-4o", "claude-sonnet-5"],
 });`,
+            "ts",
           ],
           [
             "agent",
-            "Agent",
+            "3. Agent",
             `import { MoltworldClient } from "@moltworld/sdk";
 
-// The credential holds no private key.
-const agent = new MoltworldClient({ mandate: credential });
+// The credential alone can't pay: the agent's own key co-signs every payment.
+const agent = new MoltworldClient({ mandate: credential, agentKey: process.env.AGENT_KEY });
 await agent.chat("gpt-4o", {
   messages: [{ role: "user", content: "Draft a reply" }],
 });`,
+            "ts",
           ],
           ["revoke", "Revoke", `import { revokeMandate } from "@moltworld/sdk";
 
-await revokeMandate("${origin}", owner, mandateId);`],
-        ])}
-        ${mandateLookupWidget()}
-      </div>`
-    )}
-    ${ctaBand("Give your agent a budget", "Start with a small daily cap and raise it once you trust the agent.")}`;
+// Stops all spending: the program can only pay Moltworld.
+await revokeMandate("${origin}", owner, mandateId);`, "ts"],
+        ])}</div>
+        <div data-reveal style="--d:1">${mandateLookupWidget()}</div>
+      </div>
+    `)}
+    ${ctaFinal("Give your agent <em>a budget.</em>")}`;
   return renderPage(c, { path: "/products/mandates", title: "Mandates", description: "Delegated spending for AI agents: per-call limit and expiry on-chain, daily cap and model list on the gateway, revocable at any time.", body });
 }
 
 function marketplace(c: Context) {
   const origin = config.publicDomain;
-  const share = 100 - config.marketplaceFeePercent;
   const body = `
-    ${pageHero(
-      "Marketplace",
-      "Sell your API to apps and agents",
-      `Put any HTTPS API behind Moltworld's x402 checkout. Buyers pay in USDC per call, and you receive ${share}% on-chain.`,
-      `<a class="btn" href="${docs()}/products/marketplace">List your API</a><a class="btn btn-ghost" href="/solutions/api-creators">For API creators</a>`
-    )}
-    ${block(
-      "How it works",
-      "",
-      `<ol class="steps">
-        <li><strong>Sign a listing</strong>Name, description, price and your endpoint URL, signed with your Algorand wallet. Payouts can only go to that wallet.</li>
-        <li><strong>We review it</strong>We check the endpoint and description before the listing goes live.</li>
-        <li><strong>Buyers pay per call</strong>Calls go to <code>/v1/market/{slug}/call</code>. Each forwarded request is signed with an HMAC you can verify.</li>
-        <li><strong>You get paid</strong>Your ${share}% builds up and is paid out in batched USDC transfers once it passes $${config.creatorPayoutMinUsd}.</li>
-      </ol>`
-    )}
-    ${block("Listings and earnings", "", `<div class="grid-2">${marketWidget()}${earningsWidget()}</div>`)}
-    ${block(
-      "Create a listing",
-      "",
-      `<pre class="code"><code>${esc(`const listing = {
+    ${pageHero({
+      crumbs: [["Product", "/products"]],
+      title: `Sell your API per call. <em>Keep ${share()}%.</em>`,
+      ctas: `${btn(`${docs()}/products/marketplace`, "List your API")}${btn("/solutions/api-creators", "For API sellers", "ghost")}`,
+      visual: splitDemo(),
+    })}
+    ${sec(`
+      ${secHead("From listing <em>to payout.</em>")}
+      ${stepsList([
+        "Sign a listing with your Algorand wallet.",
+        "We review the endpoint.",
+        "Buyers pay per call through x402.",
+        `Payouts in USDC once you pass $${config.creatorPayoutMinUsd}.`,
+      ])}
+    `)}
+    ${sec(`<div class="grid-2"><div data-reveal>${marketWidget()}</div><div data-reveal style="--d:1">${earningsWidget()}</div></div>`)}
+    ${sec(`
+      ${secHead("Create a listing.")}
+      <div data-reveal>${codeBlock(`const listing = {
   action: "list",
-  creator: wallet.addr.toString(),
+  creator: wallet.addr.toString(), // payouts can only go here
   slug: "weather-now",
   name: "Weather Now",
   description: "Current weather for a city, as JSON.",
@@ -366,38 +627,136 @@ await fetch("${origin}/v1/market/listings", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ listing, creator_sig: signOwnerMessage(listing, wallet.sk) }),
-});`)}</code></pre>`
-    )}
-    ${ctaBand("Turn your API into revenue", "No billing system to build. Buyers pay per call and you get paid in USDC.")}`;
+});
+// Buyers call ${origin}/v1/market/weather-now/call`)}</div>
+    `)}
+    ${ctaFinal("Turn your API <em>into revenue.</em>")}`;
   return renderPage(c, { path: "/products/marketplace", title: "Marketplace", description: "Sell your own API through Moltworld's x402 checkout and get paid per call in USDC.", body });
 }
 
 function receipts(c: Context) {
+  const fields: Array<[string, string]> = [
+    ["<code>txid</code>", "Algorand transaction that settled the payment"],
+    ["<code>payer</code>, <code>amountMicro</code>", "Who paid, and how much in micro-USDC"],
+    ["<code>upstreamProvider</code>, <code>upstreamModel</code>", "The model that actually answered"],
+    ["<code>requestSha256</code>", "Hash of the request body you sent"],
+    ["<code>responseSha256</code>", "Hash of the exact response bytes"],
+    ["<code>rebateMicro</code>", "Unused chat budget paid back"],
+    ["<code>kid</code>, <code>sig</code>", "Ed25519 key id and signature"],
+  ];
   const body = `
-    ${pageHero(
-      "Receipts",
-      "Proof of what you paid for and what you got",
-      "Every paid response includes a receipt signed with our published Ed25519 key. It ties the on-chain payment to the exact request you sent and the exact response you received.",
-      `<a class="btn" href="${docs()}/concepts/receipts">How receipts work</a>`
-    )}
-    ${block(
-      "What a receipt contains",
-      "",
-      `<div class="table-wrap"><table class="stack">
-        <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
-        <tbody>
-          <tr><td data-label="Field"><code>txid</code></td><td data-label="Meaning">The Algorand transaction that settled the payment</td></tr>
-          <tr><td data-label="Field"><code>payer</code>, <code>amountMicro</code></td><td data-label="Meaning">Who paid and how much, in micro-USDC</td></tr>
-          <tr><td data-label="Field"><code>upstreamProvider</code>, <code>upstreamModel</code></td><td data-label="Meaning">The provider and model that actually answered</td></tr>
-          <tr><td data-label="Field"><code>requestSha256</code></td><td data-label="Meaning">Hash of the request body you sent</td></tr>
-          <tr><td data-label="Field"><code>responseSha256</code></td><td data-label="Meaning">Hash of the exact response bytes you received</td></tr>
-          <tr><td data-label="Field"><code>rebateMicro</code></td><td data-label="Meaning">Unused chat budget credited back to you</td></tr>
-          <tr><td data-label="Field"><code>kid</code>, <code>sig</code></td><td data-label="Meaning">Signing key id and Ed25519 signature</td></tr>
-        </tbody></table></div>`
-    )}
-    ${block("Verify a receipt", `Paste a request id or a receipt. The signature is checked in your browser against <a href="/.well-known/moltworld-receipts.json">our published key</a>.`, receiptWidget())}
-    ${ctaBand("Every call comes with proof", "Make a request and keep the receipt for your records or your users.")}`;
+    ${pageHero({
+      crumbs: [["Product", "/products"]],
+      title: "Proof of what you paid for <em>and what you got.</em>",
+      ctas: `${btn("#verify", "Verify a receipt")}${btn("/.well-known/moltworld-receipts.json", "Signing keys", "ghost")}`,
+      visual: receiptDemo(),
+    })}
+    ${sec(`
+      ${secHead("Every paid response <em>carries one.</em>", arrowLink(`${docs()}/concepts/receipts`, "Receipt docs"))}
+      <ul class="anatomy-list" data-reveal>${fields.map(([f, d]) => `<li><span>${f}</span><span>${d}</span></li>`).join("")}</ul>
+    `)}
+    ${sec(`${secHead("Verify <em>a receipt.</em>")}<div data-reveal>${receiptWidget()}</div>`, { id: "verify" })}
+    ${ctaFinal("Every call <em>comes with proof.</em>")}`;
   return renderPage(c, { path: "/products/receipts", title: "Receipts", description: "Ed25519-signed receipts that tie each payment to the exact request and response.", body });
+}
+
+// ---------------------------------------------------------------------------
+// Pricing and developers
+// ---------------------------------------------------------------------------
+
+function pricing(c: Context) {
+  const models = catalog();
+  const examples = ["gpt", "claude-sonnet-5", "gemini", "flux-2-pro", "eleven-multilingual", "veo-3.1-fast"]
+    .map((slug) => models.find((m) => m.slug === slug))
+    .filter((m): m is CatalogEntry => !!m);
+  const reference: Record<string, string> = { chat: "Short prompt, 256 max_tokens", image: "One image", voice: "One sentence", video: "Shortest clip" };
+  const body = `
+    ${pageHero({
+      title: "Pay for the request. <em>Nothing else.</em>",
+      ctas: `${btn("/playground", "Price a request")}${btn(`${docs()}/concepts/pricing`, "Pricing docs", "ghost")}`,
+    })}
+    ${sec(`
+      <div class="formula" data-reveal role="img" aria-label="Price equals upstream cost times ${(1 + config.priceMargin).toFixed(2)}, with a minimum of $${config.priceMinFloor} per call">
+        <span class="term-box">Upstream cost</span><span class="op">&times;</span><span class="term-box">${(1 + config.priceMargin).toFixed(2)}</span><span class="op">min</span><span class="term-box">$${config.priceMinFloor}</span>
+      </div>
+    `, { line: false })}
+    ${sec(`
+      ${secHead("Never billed.")}
+      <div class="free-list">
+        ${["Accounts and plans", "Quotes and 402 challenges", "Failed generations", "Unused chat tokens"].map((t, i) => `<div class="free" data-reveal style="--d:${i}"><b>$0</b><span>${t}</span></div>`).join("")}
+      </div>
+    `)}
+    ${sec(`
+      ${secHead("What a call <em>costs today.</em>", arrowLink("/models", "All models"))}
+      <div class="table-wrap" data-reveal><table class="stack">
+        <thead><tr><th>Model</th><th>Type</th><th>Request</th><th>Price</th><th><span class="sr-only">Action</span></th></tr></thead>
+        <tbody>${examples
+          .map(
+            (m) =>
+              `<tr><td data-label="Model">${esc(m.name)}</td><td data-label="Type">${MODALITY_LABEL[m.modality]}</td><td data-label="Request">${reference[m.modality]}</td><td data-label="Price"><strong>${esc(m.from)}</strong></td><td data-label=""><a class="link-arrow" href="/playground?model=${encodeURIComponent(m.slug)}">Price yours ${icon("arrow", 14)}</a></td></tr>`
+          )
+          .join("")}</tbody>
+      </table></div>
+    `)}
+    ${sec(`
+      ${secHead("Selling <em>on the marketplace.</em>")}
+      <div class="grid-2">
+        <div data-reveal>${splitDemo()}</div>
+        ${facts([
+          ["tag", "You set the price per call."],
+          ["wallet", `${share()}% goes to you, ${config.marketplaceFeePercent}% to Moltworld.`],
+          ["refund", `Batched USDC payouts from $${config.creatorPayoutMinUsd}.`],
+        ])}
+      </div>
+    `)}
+    ${ctaFinal("See the price <em>before you pay.</em>")}`;
+  return renderPage(c, { path: "/pricing", title: "Pricing", description: `Pay per request: upstream cost plus a published ${margin()}% margin, no plans or seats, failed calls refunded and unused tokens paid back.`, body });
+}
+
+function developers(c: Context) {
+  const origin = config.publicDomain;
+  const s = snippets();
+  const body = `
+    ${pageHero({
+      title: "Everything you need <em>to build.</em>",
+      ctas: `${btn(`${docs()}/quickstart`, "Quickstart")}${btn("/playground", "Playground", "ghost")}`,
+      visual: codeTabs("dev", [["mcp", "MCP", s.mcp, "json"], ["claude", "Claude Code", s.claude, "sh"], ["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]]),
+    })}
+    ${sec(`
+      ${secHead("First call <em>in minutes.</em>")}
+      ${stepsList(["Fund a wallet with USDC.", "<code>npm i @moltworld/sdk</code>", "Set a per-request cap.", "Call any model."])}
+    `)}
+    ${sec(`
+      ${secHead("Tools.")}
+      ${linkCards([
+        { title: "TypeScript SDK", href: `${docs()}/sdks/typescript`, icon: "package" },
+        { title: "Python SDK", href: `${docs()}/sdks/python`, icon: "package" },
+        { title: "MCP servers", href: `${docs()}/agents/mcp`, icon: "plug" },
+        { title: "API reference", href: `${docs()}/api-reference/introduction`, icon: "braces" },
+        { title: "Playground", href: "/playground", icon: "play" },
+        { title: "Live network", href: "/stats", icon: "pulse" },
+      ])}
+    `)}
+    ${sec(`
+      ${secHead("Machine-readable <em>by default.</em>")}
+      <div class="table-wrap" data-reveal><table class="stack">
+        <thead><tr><th>Endpoint</th><th>Contents</th></tr></thead>
+        <tbody>
+          ${[
+            ["/llms.txt", "The service, written for language models"],
+            ["/v1/models", "Catalog with upstream ids, cost basis and prices"],
+            ["/.well-known/x402", "x402 resource descriptor"],
+            ["/.well-known/agent-card.json", "A2A agent card"],
+            ["/.well-known/moltworld-receipts.json", "Receipt signing keys"],
+            ["/mcp", "Remote MCP server, streamable HTTP"],
+            ["/health", "Readiness and network"],
+          ]
+            .map(([p, d]) => `<tr><td data-label="Endpoint"><a href="${p}"><code>${origin}${p}</code></a></td><td data-label="Contents">${d}</td></tr>`)
+            .join("")}
+        </tbody></table></div>
+    `)}
+    ${ctaFinal("Build with <em>Moltworld.</em>")}`;
+  return renderPage(c, { path: "/developers", title: "Developers", description: "Moltworld SDKs, API reference, MCP servers and discovery endpoints for apps and agents.", body });
 }
 
 // ---------------------------------------------------------------------------
@@ -406,43 +765,45 @@ function receipts(c: Context) {
 
 function solutions(c: Context) {
   const body = `
-    ${pageHero("Solutions", "Built for agents, apps and API creators", "Pick the starting point that matches what you're building.")}
-    <section class="wrap" style="padding-bottom:72px">
-      ${linkCards([
-        { title: "Agent frameworks", text: "Connect OpenClaw, Hermes Agent, Claude Code or any MCP client and let the agent pay per call.", href: "/solutions/agents" },
-        { title: "Developers", text: "Add chat, image, voice and video to your app with no API keys or subscriptions.", href: "/solutions/developers" },
-        { title: "API creators", text: "Charge per call for your own API and get paid in USDC.", href: "/solutions/api-creators" },
-      ])}
-    </section>
-    ${ctaBand("Not sure where to start?", "Price a request in the Playground, then pick an SDK.")}`;
-  return renderPage(c, { path: "/solutions", title: "Solutions", description: "Moltworld for agent frameworks, developers and API creators.", body });
+    ${pageHero({ title: "Built for agents, apps <em>and API sellers.</em>" })}
+    ${sec(`${secHead("By customer.")}${linkCards(AUDIENCES.map((a) => ({ title: a.label, href: a.href, icon: a.icon })))}`)}
+    ${sec(`${secHead("By workflow.", arrowLink("/use-cases", "Use cases by agent"))}${linkCards(WORKFLOWS.map((u) => ({ title: u.title, href: `/solutions/${u.slug}`, icon: "spark" })))}`)}
+    ${ctaFinal("Start <em>in the Playground.</em>")}`;
+  return renderPage(c, { path: "/solutions", title: "Solutions", description: "Moltworld for AI agents, app developers and API sellers.", body });
 }
 
 function solutionsAgents(c: Context) {
   const origin = config.publicDomain;
+  const models = catalog();
+  const tools: Array<[string, string]> = [
+    ["moltworld_quote", "Exact price of a request"],
+    ["moltworld_chat", "Paid chat; unused tokens paid back"],
+    ["moltworld_image", "Paid image; refunded on failure"],
+    ["moltworld_speech", "Paid text-to-speech"],
+    ["moltworld_video", "Paid video; can wait for the result"],
+    ["moltworld_spend", "Wallet and spend this session"],
+  ];
   const body = `
-    ${pageHero(
-      "Agent frameworks",
-      "Give your agent models it doesn't have, with a budget",
-      "Moltworld works with any agent that speaks MCP, including OpenClaw, Hermes Agent and Claude Code. The agent quotes, pays and keeps receipts on its own, within the limits of a mandate.",
-      `<a class="btn" href="${docs()}/agents/mcp">Connect your agent</a><a class="btn btn-ghost" href="/use-cases/agent-allowance">See the use case</a>`
-    )}
-    ${block(
-      "Two ways to connect",
-      "",
-      `<div class="table-wrap"><table class="stack">
-        <thead><tr><th></th><th>Remote MCP server</th><th>Local MCP server</th></tr></thead>
+    ${pageHero({
+      crumbs: [["Solutions", "/solutions"]],
+      title: "Give your agent models it doesn't have, <em>with a budget.</em>",
+      ctas: `${btn(`${docs()}/agents/mcp`, "Connect your agent")}${btn("/use-cases/agent-allowance", "Use case", "ghost")}`,
+      visual: chatDemo(models),
+    })}
+    ${sec(`
+      ${secHead("Two ways <em>to connect.</em>")}
+      <div class="table-wrap" data-reveal><table class="stack">
+        <thead><tr><th><span class="sr-only">Property</span></th><th>Remote MCP</th><th>Local MCP</th></tr></thead>
         <tbody>
-          <tr><td data-label="">Address</td><td data-label="Remote"><code>${origin}/mcp</code></td><td data-label="Local"><code>moltworld-mcp</code> from the SDK</td></tr>
-          <tr><td data-label="">Holds a wallet</td><td data-label="Remote">No</td><td data-label="Local">A mandate credential, never a private key</td></tr>
-          <tr><td data-label="">The agent can</td><td data-label="Remote">List models, get quotes and 402 terms, send requests you signed</td><td data-label="Local">Pay for and run chat, image, voice and video calls</td></tr>
-          <tr><td data-label="">Best for</td><td data-label="Remote">Discovery, or a person approving each payment</td><td data-label="Local">Agents that run on their own</td></tr>
-        </tbody></table></div>`
-    )}
-    ${block(
-      "Configuration",
-      "Use your framework's MCP settings. Exact keys can change between releases, so check the framework docs if a field is rejected.",
-      codeTabs("agents", [
+          <tr><td data-label="">Address</td><td data-label="Remote"><code>${origin}/mcp</code></td><td data-label="Local"><code>moltworld-mcp</code></td></tr>
+          <tr><td data-label="">Holds</td><td data-label="Remote">Nothing</td><td data-label="Local">A mandate credential and its own agent key, never the owner's key</td></tr>
+          <tr><td data-label="">Can</td><td data-label="Remote">List, quote, relay requests you signed</td><td data-label="Local">Pay for chat, image, voice and video</td></tr>
+          <tr><td data-label="">For</td><td data-label="Remote">Discovery, or a person approving each payment</td><td data-label="Local">Agents that run on their own</td></tr>
+        </tbody></table></div>
+    `)}
+    ${sec(`
+      ${secHead("Drop-in <em>configuration.</em>", arrowLink(`${docs()}/agents/mcp`, "Framework docs"))}
+      <div data-reveal>${codeTabs("agents", [
         [
           "hermes",
           "Hermes Agent",
@@ -455,6 +816,7 @@ mcp_servers:
       MOLTWORLD_MANDATE: "<credential from createMandate()>"
       MOLTWORLD_MAX_PER_REQUEST_USD: "0.25"
       MOLTWORLD_BUDGET_USD: "5"`,
+          "sh",
         ],
         [
           "openclaw",
@@ -476,6 +838,7 @@ mcp_servers:
     }
   }
 }`,
+          "json",
         ],
         [
           "claude",
@@ -485,6 +848,17 @@ mcp_servers:
 # Paid calls with a mandate:
 claude mcp add -e MOLTWORLD_MANDATE=<credential> -e MOLTWORLD_BUDGET_USD=5 \\
   moltworld-wallet -- npx -y -p @moltworld/sdk moltworld-mcp`,
+          "sh",
+        ],
+        [
+          "a2a",
+          "A2A",
+          `# Agent card
+curl -s ${origin}/.well-known/agent-card.json
+
+# JSON-RPC endpoint
+POST ${origin}/a2a`,
+          "sh",
         ],
         [
           "json",
@@ -499,73 +873,67 @@ claude mcp add -e MOLTWORLD_MANDATE=<credential> -e MOLTWORLD_BUDGET_USD=5 \\
     }
   }
 }`,
+          "json",
         ],
-      ])
-    )}
-    ${block(
-      "Tools the agent gets",
-      "",
-      `<div class="grid-3">
-        <div class="card"><h3>moltworld_quote</h3><p>Exact price of a request before paying.</p></div>
-        <div class="card"><h3>moltworld_chat</h3><p>Paid chat completion. Unused tokens are paid back.</p></div>
-        <div class="card"><h3>moltworld_image</h3><p>Paid image generation, refunded if it fails.</p></div>
-        <div class="card"><h3>moltworld_speech</h3><p>Paid text-to-speech, returned as audio.</p></div>
-        <div class="card"><h3>moltworld_video</h3><p>Paid video generation, with optional waiting for the result.</p></div>
-        <div class="card"><h3>moltworld_spend</h3><p>Wallet address and spend so far in this session.</p></div>
-      </div>
-      <p class="note" style="margin-top:12px">Agents that use A2A can also reach the catalog agent at <code>${origin}/.well-known/agent-card.json</code>.</p>`
-    )}
-    ${ctaBand("Connect your agent", "Create a mandate with a small daily cap, add the MCP server and ask your agent for a video.")}`;
-  return renderPage(c, { path: "/solutions/agents", title: "Agent frameworks", description: "Use Moltworld from OpenClaw, Hermes Agent, Claude Code or any MCP client, with mandate spending limits.", body });
+      ])}</div>
+    `)}
+    ${sec(`
+      ${secHead("Tools <em>the agent gets.</em>")}
+      <div class="table-wrap" data-reveal><table class="stack">
+        <thead><tr><th>Tool</th><th>Does</th></tr></thead>
+        <tbody>${tools.map(([t, d]) => `<tr><td data-label="Tool"><code>${t}</code></td><td data-label="Does">${d}</td></tr>`).join("")}</tbody>
+      </table></div>
+    `)}
+    ${ctaFinal("Connect <em>your agent.</em>")}`;
+  return renderPage(c, { path: "/solutions/agents", title: "AI agents", description: "Use Moltworld from OpenClaw, Hermes Agent, Claude Code, A2A or any MCP client, with mandate spending limits.", body, data: catalogScript(models) });
 }
 
 function solutionsDevelopers(c: Context) {
   const s = snippets();
   const body = `
-    ${pageHero(
-      "Developers",
-      "Add AI to your app without keys or subscriptions",
-      "Call any model with one request and pay for exactly that request. No provider accounts to manage, no prepaid credit, no monthly minimum.",
-      `<a class="btn" href="${docs()}/quickstart">Quickstart</a><a class="btn btn-ghost" href="/playground">Open Playground</a>`
-    )}
-    ${block(
-      "Why developers use it",
-      "",
-      `<div class="grid-3">
-        <div class="card"><h3>One integration</h3><p>Chat, image, voice and video from several providers behind one API with OpenAI-style bodies.</p></div>
-        <div class="card"><h3>Predictable cost</h3><p>Every call is quoted before you pay. Set a per-request cap and a budget in the SDK.</p></div>
-        <div class="card"><h3>No failed-call charges</h3><p>Chat is charged after the answer. Media is refunded on-chain if it fails.</p></div>
-        <div class="card"><h3>Safe retries</h3><p>Retrying a payment returns the original response instead of charging again.</p></div>
-        <div class="card"><h3>Audit trail</h3><p>Signed receipts for every call, with on-chain transaction ids.</p></div>
-        <div class="card"><h3>Pass costs through</h3><p>Your users can pay for their own calls from their own wallets.</p></div>
-      </div>`
-    )}
-    ${block("Start in a few lines", "", codeTabs("dev", [["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]]))}
-    ${ctaBand("Build with Moltworld", "Try a request in the Playground, then copy the code for your stack.")}`;
-  return renderPage(c, { path: "/solutions/developers", title: "Developers", description: "Add chat, image, voice and video models to your app with per-request USDC payments and no API keys.", body });
+    ${pageHero({
+      crumbs: [["Solutions", "/solutions"]],
+      title: "Add AI to your app <em>without keys or plans.</em>",
+      ctas: `${btn(`${docs()}/quickstart`, "Quickstart")}${btn("/playground", "Playground", "ghost")}`,
+    })}
+    ${sec(`
+      ${secHead("Less plumbing.")}
+      ${facts([
+        ["layers", "Chat, image, voice and video behind one API with OpenAI-style bodies."],
+        ["tag", "Every call is quoted first. Set a per-request cap and a budget."],
+        ["refund", "Chat is charged after the answer. Failed media is refunded."],
+        ["shield", "Retries return the original response, never a second charge."],
+        ["receipt", "A signed receipt and transaction id for every call."],
+        ["users", "Users can pay for their own calls from their own wallets."],
+      ])}
+    `)}
+    ${sec(`<div class="dev-grid"><h2 data-split>Start <em>in a few lines.</em></h2><div data-reveal>${codeTabs("devs", [["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]])}</div></div>`)}
+    ${ctaFinal("Build with <em>Moltworld.</em>")}`;
+  return renderPage(c, { path: "/solutions/developers", title: "App developers", description: "Add chat, image, voice and video models to your app with per-request USDC payments and no API keys.", body });
 }
 
 function solutionsCreators(c: Context) {
-  const share = 100 - config.marketplaceFeePercent;
   const body = `
-    ${pageHero(
-      "API creators",
-      "Charge per call for your API",
-      `List your API on Moltworld and buyers pay for each call in USDC. You don't build billing, accounts or key management. You keep ${share}%.`,
-      `<a class="btn" href="${docs()}/products/marketplace">List your API</a><a class="btn btn-ghost" href="/products/marketplace">See the marketplace</a>`
-    )}
-    ${block(
-      "What you get",
-      "",
-      `<ul class="checks" style="max-width:70ch">
-        <li><strong>Agents can buy from you.</strong> Any x402 client, including agents using Moltworld's MCP server, can call your API and pay per request.</li>
-        <li><strong>No billing to build.</strong> Moltworld handles quotes, payment, settlement and receipts.</li>
-        <li><strong>Authenticated calls.</strong> Each forwarded request carries an HMAC signature over its body, so you can reject anything that didn't come through Moltworld.</li>
-        <li><strong>Charged only on success.</strong> Buyers are charged after your API answers with a 2xx, which keeps disputes rare.</li>
-        <li><strong>Paid in USDC.</strong> Earnings are paid to your wallet in batched on-chain transfers once they pass $${config.creatorPayoutMinUsd}.</li>
-      </ul>`
-    )}
-    ${block("Verify Moltworld's signature", "", `<pre class="code"><code>${esc(`import crypto from "crypto";
+    ${pageHero({
+      crumbs: [["Solutions", "/solutions"]],
+      title: `Charge per call for your API. <em>Keep ${share()}%.</em>`,
+      ctas: `${btn(`${docs()}/products/marketplace`, "List your API")}${btn("/products/marketplace", "Marketplace", "ghost")}`,
+      visual: splitDemo(),
+    })}
+    ${sec(`
+      ${secHead("Billing <em>you don't build.</em>")}
+      ${facts([
+        ["agent", "Any x402 client or MCP agent can buy from you."],
+        ["layers", "Quotes, payment, settlement and receipts are handled."],
+        ["key", "Every forwarded request is HMAC-signed."],
+        ["check", "Buyers are charged only when you answer 2xx."],
+        ["wallet", `USDC payouts to your wallet from $${config.creatorPayoutMinUsd}.`],
+        ["globe", "Listed where agents already look: HTTP, MCP and A2A."],
+      ])}
+    `)}
+    ${sec(`
+      ${secHead("Verify <em>Moltworld's signature.</em>")}
+      <div data-reveal>${codeBlock(`import crypto from "crypto";
 
 // X-Moltworld-Timestamp, X-Moltworld-Request-Id, X-Moltworld-Signature
 function fromMoltworld(req, rawBody, signingSecret) {
@@ -576,9 +944,10 @@ function fromMoltworld(req, rawBody, signingSecret) {
     .update(\`\${ts}.\${id}.\${bodyHash}\`).digest("base64url");
   return Math.abs(Date.now() / 1000 - Number(ts)) < 300 &&
     crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers["x-moltworld-signature"]));
-}`)}</code></pre>`)}
-    ${ctaBand("List your first API", "It takes one signed request. We review listings before they go live.")}`;
-  return renderPage(c, { path: "/solutions/api-creators", title: "API creators", description: "Sell your API per call to apps and agents, paid in USDC through Moltworld.", body });
+}`)}</div>
+    `)}
+    ${ctaFinal("List your <em>first API.</em>")}`;
+  return renderPage(c, { path: "/solutions/api-creators", title: "API sellers", description: "Sell your API per call to apps and agents, paid in USDC through Moltworld.", body });
 }
 
 // ---------------------------------------------------------------------------
@@ -599,25 +968,26 @@ function useCaseDetails(): Record<string, UseCaseDetail> {
       problem:
         "Personal agents like OpenClaw and Hermes Agent run all day on one model and one subscription. When a task needs a video, a voice reply or a stronger model, you either hand the agent an API key with no limit, or the task fails.",
       how: [
-        "You create a mandate: for example $0.25 per call, $5 a day, chosen models, valid for 30 days.",
-        "You give the agent the mandate credential. It contains no private key.",
-        "The agent adds Moltworld as an MCP server and pays for calls as it needs them.",
-        "Every call comes back with a receipt. You can see spend per day and revoke the mandate at any time.",
+        "Create a mandate: $0.25 per call, $5 a day, chosen models, 30 days.",
+        "Give the agent the credential. It contains no private key.",
+        "The agent adds Moltworld as an MCP server and pays as it goes.",
+        "Every call returns a receipt. Revoke the mandate any time.",
       ],
-      code: `const { credential } = await createMandate("${origin}", owner, {
-  maxPerCallUsd: 0.25, dailyCapUsd: 5, validDays: 30,
+      code: `// On the agent: npx -y -p @moltworld/sdk moltworld-mcp keygen  ->  agent address
+const { credential } = await createMandate("${origin}", owner, {
+  agent: agentAddress, maxPerCallUsd: 0.25, dailyCapUsd: 5, validDays: 30,
 });
 // Give MOLTWORLD_MANDATE=<credential> to the agent's MCP server.`,
-      products: [["Mandates", "/products/mandates"], ["Agent frameworks", "/solutions/agents"]],
+      products: [["Mandates", "/products/mandates"], ["AI agents", "/solutions/agents"]],
     },
     "model-escalation": {
       problem:
         "Running every step of an agent or app on a frontier model is expensive, and paying for a second subscription to use one occasionally is wasteful.",
       how: [
-        "Run your normal workload on a cheap model, or on your own.",
-        "When a step is hard, such as planning, code review or a long document, send just that step to a frontier model through Moltworld.",
-        "Check the price first with a quote, then pay for that one call.",
-        "Unused max_tokens budget is paid back, so you only pay for what the model wrote.",
+        "Run the normal workload on a cheap model, or your own.",
+        "Send only the hard step to a frontier model through Moltworld.",
+        "Quote it first, then pay for that one call.",
+        "Unused max_tokens budget is paid back.",
       ],
       code: `const quote = await client.quote("gpt-5.4-pro", body);
 if (quote.microUsdc < 200_000) {
@@ -629,10 +999,10 @@ if (quote.microUsdc < 200_000) {
       problem:
         "Content workflows need several models: an image model for the thumbnail, a voice model for narration, a video model for the clip. Each usually means a separate account and subscription.",
       how: [
-        "Generate the script with a chat model, the voice-over with a voice model and the clip with a video model, all through one API.",
-        "Video runs as a job. Poll it or let the SDK wait for the result.",
-        "If a generation fails or doesn't finish within an hour, the payment is refunded on-chain automatically.",
-        "Receipts give you a per-asset cost record.",
+        "Script, voice-over and clip through one API.",
+        "Video runs as a job; poll it or let the SDK wait.",
+        "Failed or unfinished generations are refunded on-chain.",
+        "Receipts give a cost record per asset.",
       ],
       code: `const clip = await client.video("kling-v3.0-std", { prompt, duration: 5 });
 const job = await client.waitForJob(clip.data.id);
@@ -643,26 +1013,27 @@ const voice = await client.speech("tts-1-hd", { input: script });`,
       problem:
         "Agents increasingly call other agents and specialised APIs, but there's no simple way for an agent to pay another service per call, or for a builder to charge for one.",
       how: [
-        "List your API or agent skill on the Moltworld marketplace with a price per call.",
-        "Other agents call it through Moltworld and pay in USDC, using the same x402 flow as model calls.",
+        "List your API or agent skill with a price per call.",
+        "Other agents pay through the same x402 flow as model calls.",
         "Your endpoint receives signed requests and answers as usual.",
-        "You receive your share in batched on-chain payouts.",
+        "Your share arrives in batched on-chain payouts.",
       ],
       code: `// Buyer side: the same client that pays for models
 const res = await client.market("weather-now", { city: "Lagos" });`,
-      products: [["Marketplace", "/products/marketplace"], ["API creators", "/solutions/api-creators"]],
+      products: [["Marketplace", "/products/marketplace"], ["API sellers", "/solutions/api-creators"]],
     },
     "team-budgets": {
       problem:
         "Teams running several agents, or giving staff AI tools, need to know who spent what and to stop runaway spend, without sharing one API key.",
       how: [
-        "Create one mandate per agent or person, each with its own per-call limit, daily cap and allowed models.",
-        "All payments come from the team wallet, but each mandate is tracked separately.",
-        "Receipts and the mandate lookup show spend per mandate.",
-        "Revoke a mandate when an agent is retired or someone leaves.",
+        "One mandate per agent or person, each with its own limits.",
+        "Payments come from the team wallet, tracked per mandate.",
+        "Receipts and the mandate lookup show who spent what.",
+        "Revoke a mandate when an agent retires or someone leaves.",
       ],
       code: `for (const member of team) {
   await createMandate("${origin}", teamWallet, {
+    agent: member.agentAddress, // each agent's own key, from moltworld-mcp keygen
     maxPerCallUsd: 0.5, dailyCapUsd: member.dailyBudget,
     allowedModels: member.models, label: member.name,
   });
@@ -672,105 +1043,136 @@ const res = await client.market("weather-now", { city: "Lagos" });`,
   };
 }
 
-function useCases(c: Context) {
-  const body = `
-    ${pageHero("Use cases", "What people build with Moltworld", "Pay-per-request AI works best where usage is uneven, automated or done by agents.")}
-    <section class="wrap" style="padding-bottom:72px">
-      ${linkCards(USE_CASES.map((u) => ({ title: u.title, text: u.summary, href: `/use-cases/${u.slug}`, cta: "Read the use case" })), 3)}
-    </section>
-    ${ctaBand("Have a different use case?", "Start in the Playground and see what each call would cost.")}`;
-  return renderPage(c, { path: "/use-cases", title: "Use cases", description: "How teams and agents use Moltworld: allowances, model escalation, content pipelines, agent commerce and team budgets.", body });
+function agentCard(t: ReturnType<typeof agentTypes>[number]): string {
+  return `<a class="uc" href="/use-cases/${t.slug}"><span class="uc-ic">${icon(t.icon, 22)}</span><h3>${esc(t.short)}</h3><span class="uc-examples">${t.examples.map(esc).join(" &middot; ")}</span><span class="go">${icon("arrow", 16)}</span></a>`;
 }
 
-function useCase(slug: string) {
+function useCases(c: Context) {
+  const body = `
+    ${pageHero({ title: "Every kind of agent. <em>One wallet.</em>", ctas: `${btn(`${docs()}/agents/mcp`, "Connect an agent")}${btn("/products/mandates", "Mandates", "ghost")}` })}
+    ${sec(`<div class="uc-grid" data-reveal>${agentTypes().map(agentCard).join("")}</div>`, { line: false })}
+    ${sec(`${secHead("By workflow.")}${linkCards(WORKFLOWS.map((u) => ({ title: u.title, href: `/solutions/${u.slug}`, icon: "spark" })))}`)}
+    ${ctaFinal("Price your <em>first request.</em>")}`;
+  return renderPage(c, { path: "/use-cases", title: "Use cases", description: "How every kind of agent uses Moltworld: personal, coding, knowledge-work, computer-use, multi-agent, media and voice agents, self-hosted or in the cloud.", body });
+}
+
+/** First step for any agent that pays under a mandate: its own key, created where it runs. */
+const AGENT_KEY_STEP: [string, string, string, string] = [
+  "key",
+  "Agent key",
+  `# Once, where the agent runs. The key never leaves this machine.
+npx -y -p @moltworld/sdk moltworld-mcp keygen
+# Prints the agent's address: give it to the wallet owner, who binds a mandate to it.
+# The resulting credential goes in MOLTWORLD_MANDATE below; it can't pay without this key.`,
+  "sh",
+];
+
+function agentPage(slug: string) {
   return (c: Context) => {
-    const meta = USE_CASES.find((u) => u.slug === slug)!;
+    const t = agentTypes().find((a) => a.slug === slug)!;
+    const workflow = WORKFLOWS.find((w) => w.slug === t.workflow);
+    const others = agentTypes().filter((a) => a.slug !== slug).slice(0, 3);
+    const body = `
+      ${pageHero({
+        crumbs: [["Use cases", "/use-cases"]],
+        title: t.title,
+        ctas: `${btn("/products/mandates", "Create a mandate")}${btn(`${docs()}/agents/mcp`, "MCP docs", "ghost")}`,
+        visual: `<ul class="example-list">${t.examples.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`,
+      })}
+      ${sec(`
+        ${secHead("How it <em>connects.</em>")}
+        <div class="table-wrap" data-reveal><table class="stack">
+          <thead><tr><th>Agent</th><th>Connects with</th><th>Pays</th></tr></thead>
+          <tbody>${t.connect.map(([agent, how, pays]) => `<tr><td data-label="Agent">${esc(agent)}</td><td data-label="Connects with">${esc(how)}</td><td data-label="Pays"><span class="pays pays-${pays}">${esc(PAYS_LABEL[pays])}</span></td></tr>`).join("")}</tbody>
+        </table></div>
+      `)}
+      ${sec(`<div class="dev-grid"><h2 data-split>Set it <em>up.</em></h2><div data-reveal>${codeTabs("agent", [
+        ...(t.connect.some(([, , pays]) => pays === "mandate") ? [AGENT_KEY_STEP] : []),
+        ...t.configs.map(([id, label, code, lang]) => [id, label, code, lang] as [string, string, string, string]),
+      ])}</div></div>`)}
+      ${sec(`
+        ${secHead("Why it <em>fits.</em>", workflow ? arrowLink(`/solutions/${workflow.slug}`, esc(workflow.short)) : "")}
+        ${facts(t.facts)}
+      `)}
+      ${sec(`${secHead("More <em>agents.</em>", arrowLink("/use-cases", "All use cases"))}<div class="uc-grid">${others.map(agentCard).join("")}</div>`)}
+      ${ctaFinal("Connect <em>your agent.</em>", `${btn(`${docs()}/agents/mcp`, "Connect an agent")}${btn("/playground", "Playground", "ghost")}`)}`;
+    return renderPage(c, { path: `/use-cases/${slug}`, title: t.short, description: t.summary, body });
+  };
+}
+
+function workflowPage(slug: string) {
+  return (c: Context) => {
+    const meta = WORKFLOWS.find((u) => u.slug === slug)!;
     const detail = useCaseDetails()[slug];
     const body = `
-      ${pageHero("Use case", meta.title, esc(meta.summary))}
-      <section class="block">
-        <div class="wrap grid-2">
-          <div class="prose">
-            <h2 style="margin-top:0">The problem</h2>
-            <p>${esc(detail.problem)}</p>
-            <h2>How it works with Moltworld</h2>
+      ${pageHero({ crumbs: [["Solutions", "/solutions"]], title: esc(meta.title), ctas: detail.products.map(([label, href], i) => btn(href, esc(label), i ? "ghost" : "primary")).join("") })}
+      ${sec(`
+        <div class="dev-grid">
+          <div class="prose" data-reveal>
+            <p class="problem-text">${esc(detail.problem)}</p>
             <ol>${detail.how.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>
           </div>
-          <div>
-            <pre class="code" style="margin-top:0"><code>${esc(detail.code)}</code></pre>
-            <div class="card" style="margin-top:16px">
-              <h3>Built with</h3>
-              <p>${detail.products.map(([label, href]) => `<a href="${href}">${esc(label)}</a>`).join(" and ")}</p>
-            </div>
-          </div>
+          <div data-reveal style="--d:1">${codeBlock(detail.code)}</div>
         </div>
-      </section>
-      ${block(
-        "More use cases",
-        "",
-        linkCards(USE_CASES.filter((u) => u.slug !== slug).slice(0, 3).map((u) => ({ title: u.title, text: u.summary, href: `/use-cases/${u.slug}`, cta: "Read the use case" })))
-      )}
-      ${ctaBand("Try it yourself", "Price the first request in the Playground.")}`;
-    return renderPage(c, { path: `/use-cases/${slug}`, title: meta.title, description: meta.summary, body });
+      `, { line: false })}
+      ${sec(`${secHead("More <em>workflows.</em>")}${linkCards(WORKFLOWS.filter((u) => u.slug !== slug).slice(0, 3).map((u) => ({ title: u.title, href: `/solutions/${u.slug}`, icon: "spark" })))}`)}
+      ${ctaFinal("Try it <em>yourself.</em>")}`;
+    return renderPage(c, { path: `/solutions/${slug}`, title: meta.title, description: meta.summary, body });
   };
 }
 
 // ---------------------------------------------------------------------------
-// Playground and usage
+// Playground and live network
 // ---------------------------------------------------------------------------
 
 function playground(c: Context) {
   const models = catalog();
   const body = `
-    ${pageHero("Playground", "Price any request before you pay", "Choose a model and write a request. You'll see the exact price, the 402 response your client will receive, and code to make the call.")}
-    <section class="wrap" style="padding-bottom:56px">${quoteWidget()}</section>
-    ${block("Verify a receipt", `Paste a request id or receipt from a paid call. The signature is checked in your browser against <a href="/.well-known/moltworld-receipts.json">our published key</a>.`, receiptWidget(), "verify")}`;
+    ${pageHero({ title: "Run any model. <em>Pay per request.</em>" })}
+    <section class="sec" style="padding-top:48px"><div class="wrap">${quoteWidget()}</div></section>
+    ${sec(`${secHead("Verify <em>a receipt.</em>", arrowLink("/.well-known/moltworld-receipts.json", "Signing keys"))}${receiptWidget()}`, { id: "verify" })}`;
   return renderPage(c, {
     path: "/playground",
     title: "Playground",
-    description: "Price any Moltworld request, see its x402 payment terms, and get the code to make the call.",
+    description: "Run any Moltworld model with a real x402 payment from your Algorand wallet or an agent mandate, with the receipt verified in your browser. Quotes and 402 challenges are free.",
     body,
-    data: catalogScript(models),
+    data: catalogScript(models) + payConfigScript(),
   });
 }
 
 function usage(c: Context) {
   const body = `
-    ${pageHero("Usage", "Usage from the public ledger", "These figures come from the gateway ledger and are cross-verified by the Algorand x402 facilitator. Each settlement links to its Algorand transaction, so you can check every number on-chain.")}
-    <section class="wrap" style="padding-bottom:24px">
+    ${pageHero({
+      title: "Usage from <em>the public ledger.</em>",
+      ctas: `<a class="btn btn-ghost" href="https://facilitator.goplausible.xyz/dashboard/merchants/414f1538ce0d6de4" target="_blank" rel="noopener" style="max-width:100%;white-space:normal;text-align:center">Facilitator dashboard ${icon("arrow", 16)}</a>`,
+    })}
+    <section class="sec" style="padding-top:56px"><div class="wrap">
       ${statsWidget()}
-      <dl class="kv" style="margin-top:24px;max-width:520px">
-        <dt>Paid requests, last 24h</dt><dd id="sPaid24">-</dd>
+      <dl class="kv-list" style="margin-top:40px" data-reveal>
+        <dt>Paid requests, 24h</dt><dd id="sPaid24">-</dd>
         <dt>Gross</dt><dd id="sGross">-</dd>
         <dt>Facilitator success rate</dt><dd id="sSuccessRate">-</dd>
-        <dt>Average settlement time</dt><dd id="sAvgLatency">-</dd>
+        <dt>Average settlement</dt><dd id="sAvgLatency">-</dd>
         <dt>Average ticket</dt><dd id="sAvgTicket">-</dd>
-        <dt>Paid back as rebates</dt><dd id="sRebated">-</dd>
+        <dt>Rebated</dt><dd id="sRebated">-</dd>
         <dt>Returning wallets</dt><dd id="sRepeat">-</dd>
       </dl>
-      <div style="margin-top:20px">
-        <a href="https://facilitator.goplausible.xyz/dashboard/merchants/414f1538ce0d6de4" target="_blank" rel="noopener" class="btn btn-ghost btn-small" style="max-width:100%;white-space:normal;text-align:center">
-          Facilitator dashboard ↗
-        </a>
-      </div>
-    </section>
-    ${block(
-      "Top models by on-chain volume",
-      "Model settlements recorded on Algorand through the x402 facilitator.",
-      `<div class="table-wrap"><table class="stack">
+    </div></section>
+    ${sec(`
+      ${secHead("Top models <em>by volume.</em>")}
+      <div class="table-wrap" data-reveal><table class="stack">
         <thead><tr><th>Model</th><th>Settles</th><th>Volume (USDC)</th><th>Price</th></tr></thead>
         <tbody id="topModelRows"><tr><td colspan="4">Loading</td></tr></tbody>
-      </table></div>`
-    )}
-    ${block(
-      "Recent settlements",
-      "",
-      `<div class="table-wrap"><table class="stack">
+      </table></div>
+    `)}
+    ${sec(`
+      ${secHead("Recent <em>settlements.</em>")}
+      <div class="table-wrap" data-reveal><table class="stack">
         <thead><tr><th>When</th><th>Model</th><th>Amount</th><th>Transaction</th></tr></thead>
         <tbody id="recentRows"><tr><td colspan="4">Loading</td></tr></tbody>
-      </table></div>`
-    )}`;
-  return renderPage(c, { path: "/stats", title: "Usage", description: "Moltworld usage from the public ledger, with on-chain transaction links.", body });
+      </table></div>
+    `)}`;
+  return renderPage(c, { path: "/stats", title: "Live network", description: "Moltworld usage from the public ledger, cross-checked with the x402 facilitator, with on-chain transaction links.", body });
 }
 
 /** Registers every page route and the shared assets. */
@@ -783,6 +1185,8 @@ export function registerSite(app: Hono): string[] {
     "/products/mandates": mandates,
     "/products/marketplace": marketplace,
     "/products/receipts": receipts,
+    "/pricing": pricing,
+    "/developers": developers,
     "/solutions": solutions,
     "/solutions/agents": solutionsAgents,
     "/solutions/developers": solutionsDevelopers,
@@ -791,9 +1195,11 @@ export function registerSite(app: Hono): string[] {
     "/playground": playground,
     "/stats": usage,
   };
-  for (const u of USE_CASES) pages[`/use-cases/${u.slug}`] = useCase(u.slug);
+  for (const w of WORKFLOWS) pages[`/solutions/${w.slug}`] = workflowPage(w.slug);
+  for (const t of agentTypes()) pages[`/use-cases/${t.slug}`] = agentPage(t.slug);
   for (const [path, handler] of Object.entries(pages)) app.get(path, handler);
-  app.get("/assets/site.css", handleCss);
-  app.get("/assets/site.js", handleJs);
+  // Workflows moved from /use-cases to /solutions; keep old links working.
+  for (const w of WORKFLOWS) app.get(`/use-cases/${w.slug}`, (c) => c.redirect(`/solutions/${w.slug}`, 301));
+  for (const name of ASSET_NAMES) app.get(`/assets/${name}`, handleAsset(name));
   return Object.keys(pages);
 }

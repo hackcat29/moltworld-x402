@@ -2,8 +2,10 @@
 export const SITE_JS = String.raw`
 (() => {
   const $ = (id) => document.getElementById(id);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
   const ORIGIN = document.body.dataset.origin || location.origin;
   const EXPLORER = document.body.dataset.explorer || "https://lora.algokit.io/mainnet";
+  const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const el = (tag, attrs = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -12,12 +14,13 @@ export const SITE_JS = String.raw`
     for (const child of children) node.append(child);
     return node;
   };
-  const toast = (msg) => { const t = $("toast"); if (!t) return; t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1800); };
+  const toast = (msg) => { const t = $("toast"); if (!t) return; t.textContent = msg; t.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 1800); };
   const fmtMicro = (m) => "$" + (Number(m) / 1e6).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
   const kv = (pairs) => { const dl = el("dl", { class: "kv" }); for (const [k, v] of pairs) { if (v === undefined || v === null || v === "") continue; dl.append(el("dt", { text: k }), typeof v === "string" ? el("dd", { text: v }) : el("dd", {}, v)); } return dl; };
   const txLink = (txid) => { const a = el("a", { href: EXPLORER + "/transaction/" + encodeURIComponent(txid), target: "_blank", rel: "noopener", text: txid.slice(0, 10) + "..." + txid.slice(-6) }); a.title = txid; return a; };
   const errorBox = (msg) => el("p", { class: "err", text: msg });
   const isAddress = (s) => /^[A-Z2-7]{58}$/.test(s);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   async function api(path, init) {
     const res = await fetch(path, init);
     let body = null;
@@ -25,16 +28,30 @@ export const SITE_JS = String.raw`
     return { res, body };
   }
   const catalogData = () => { const node = $("catalog"); return node ? JSON.parse(node.textContent) : []; };
+  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const rgba = (hex) => { const n = parseInt(hex.replace("#", ""), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1]; };
+  const onScheme = (fn) => matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => requestAnimationFrame(fn));
 
   // ---------------------------------------------------------------- header
+  const header = $("siteHeader");
+  const onScroll = () => header && header.classList.toggle("scrolled", scrollY > 8);
+  addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+
   const nav = $("nav"), menuBtn = $("menuBtn");
-  const triggers = Array.from(document.querySelectorAll(".nav-trigger"));
-  const desktop = () => window.matchMedia("(min-width: 961px)").matches;
+  const triggers = $$(".nav-trigger");
+  const desktop = () => matchMedia("(min-width: 961px)").matches;
   function setMenu(trigger, open) {
     trigger.setAttribute("aria-expanded", String(open));
-    $(trigger.getAttribute("aria-controls")).hidden = !open;
+    const menu = $(trigger.getAttribute("aria-controls"));
+    menu.hidden = !open;
+    menu.style.left = "";
+    if (open && desktop()) {
+      const r = menu.getBoundingClientRect(), over = r.right - (document.documentElement.clientWidth - 16);
+      if (over > 0) menu.style.left = (parseFloat(getComputedStyle(menu).left) - over) + "px";
+    }
   }
-  function closeAll(except) { triggers.forEach((t) => t !== except && setMenu(t, false)); }
+  function closeAll(except) { triggers.forEach((t) => t !== except && t.getAttribute("aria-expanded") === "true" && setMenu(t, false)); }
   triggers.forEach((t) => {
     let hoverOpenedAt = 0;
     t.addEventListener("click", (e) => {
@@ -50,46 +67,49 @@ export const SITE_JS = String.raw`
     item.addEventListener("mouseenter", () => {
       if (!desktop()) return;
       clearTimeout(timer);
-      if (t.getAttribute("aria-expanded") !== "true") hoverOpenedAt = Date.now();
-      closeAll(t);
-      setMenu(t, true);
+      if (t.getAttribute("aria-expanded") !== "true") { hoverOpenedAt = Date.now(); closeAll(t); setMenu(t, true); }
     });
-    item.addEventListener("mouseleave", () => { if (!desktop()) return; timer = setTimeout(() => setMenu(t, false), 150); });
+    item.addEventListener("mouseleave", () => { if (!desktop()) return; timer = setTimeout(() => setMenu(t, false), 160); });
   });
   document.addEventListener("click", (e) => { if (desktop() && !e.target.closest(".nav-item")) closeAll(); });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     const open = triggers.find((t) => t.getAttribute("aria-expanded") === "true");
     if (open) { setMenu(open, false); open.focus(); }
-    else if (nav && nav.classList.contains("open")) { nav.classList.remove("open"); menuBtn.setAttribute("aria-expanded", "false"); menuBtn.focus(); }
+    else if (nav && nav.classList.contains("open")) { toggleNav(false); menuBtn.focus(); }
   });
-  if (menuBtn) {
-    menuBtn.addEventListener("click", () => {
-      const open = nav.classList.toggle("open");
-      menuBtn.setAttribute("aria-expanded", String(open));
-      menuBtn.textContent = open ? "Close" : "Menu";
-      document.body.style.overflow = open ? "hidden" : "";
-    });
+  function toggleNav(open) {
+    nav.classList.toggle("open", open);
+    menuBtn.setAttribute("aria-expanded", String(open));
+    menuBtn.querySelector(".menu-text").textContent = open ? "Close" : "Menu";
+    document.body.style.overflow = open ? "hidden" : "";
   }
+  if (menuBtn) menuBtn.addEventListener("click", () => toggleNav(!nav.classList.contains("open")));
 
   // ---------------------------------------------------------------- network label
   const netLabel = $("netLabel");
   if (netLabel) {
+    const status = $("netStatus");
     api("/health").then(({ res, body }) => {
       const ok = res.ok && body && body.ready;
       netLabel.textContent = (body && body.network === "mainnet" ? "Algorand Mainnet" : "Algorand Testnet") + (ok ? "" : " (unavailable)");
-      netLabel.classList.toggle("down", !ok);
-    }).catch(() => netLabel.classList.add("down"));
+      status.classList.toggle("down", !ok);
+    }).catch(() => status.classList.add("down"));
   }
 
   // ---------------------------------------------------------------- copy + tabs
   document.addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-copy]");
+    const btn = e.target.closest("[data-copy], [data-copy-tabs]");
     if (!btn) return;
-    try { await navigator.clipboard.writeText(btn.dataset.copy); toast("Copied"); } catch { toast("Copy failed"); }
+    let text = btn.dataset.copy;
+    if (btn.dataset.copyTabs) {
+      const panel = $$('[id^="p-' + btn.dataset.copyTabs + '-"]').find((p) => !p.hidden);
+      text = panel ? panel.textContent : "";
+    }
+    try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Copy failed"); }
   });
-  document.querySelectorAll('[role="tablist"]').forEach((list) => {
-    const tabs = Array.from(list.querySelectorAll('[role="tab"]'));
+  $$('[role="tablist"]').forEach((list) => {
+    const tabs = $$('[role="tab"]', list);
     const select = (tab, focus) => {
       tabs.forEach((t) => { const on = t === tab; t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1; $(t.getAttribute("aria-controls")).hidden = !on; });
       if (focus) tab.focus();
@@ -102,6 +122,161 @@ export const SITE_JS = String.raw`
       });
     });
   });
+
+  // ---------------------------------------------------------------- motion: reveal, split headlines, counters
+  $$("[data-split]").forEach((node) => {
+    let i = 0;
+    const wrap = (n) => {
+      for (const child of Array.from(n.childNodes)) {
+        if (child.nodeType === 3) {
+          const frag = document.createDocumentFragment();
+          child.textContent.split(/(\s+)/).forEach((part) => {
+            if (!part) return;
+            if (/^\s+$/.test(part)) { frag.append(part); return; }
+            const w = el("span", { class: "w" }, el("span", { text: part }));
+            w.firstChild.style.setProperty("--i", String(i++));
+            frag.append(w);
+          });
+          child.replaceWith(frag);
+        } else if (child.nodeType === 1) wrap(child);
+      }
+    };
+    wrap(node);
+    node.classList.add("split");
+  });
+  const revealTargets = $$("[data-reveal], [data-split], .steps, [data-term], [data-chat], [data-meter], [data-receipt]");
+  const fire = (node) => { node.classList.add("in"); node.dispatchEvent(new CustomEvent("reveal")); };
+  if ("IntersectionObserver" in window && !REDUCE) {
+    const io = new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) { fire(e.target); io.unobserve(e.target); } }), { rootMargin: "0px 0px -8% 0px" });
+    revealTargets.forEach((n) => io.observe(n));
+  } else revealTargets.forEach(fire);
+  const onReveal = (node, fn) => { if (node.classList.contains("in")) fn(); else node.addEventListener("reveal", fn, { once: true }); };
+
+  // Counts a number up to its final text, keeping the prefix and decimals of that text.
+  function countTo(node, finalText) {
+    const m = /^([^0-9]*)([0-9][0-9,]*\.?[0-9]*)(.*)$/.exec(finalText);
+    if (!m || REDUCE) { node.textContent = finalText; return; }
+    const target = parseFloat(m[2].replace(/,/g, "")), decimals = (m[2].split(".")[1] || "").length, start = performance.now(), dur = 1400;
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / dur), v = target * (1 - Math.pow(1 - k, 4));
+      node.textContent = k < 1 ? m[1] + v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) + m[3] : finalText;
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  $$("[data-count]").forEach((n) => onReveal(n.closest("[data-reveal]") || n, () => countTo(n, n.dataset.count)));
+
+  // ---------------------------------------------------------------- motion: pointer
+  if (!REDUCE && matchMedia("(hover: hover)").matches) {
+    $$("[data-magnetic]").forEach((b) => {
+      b.addEventListener("pointermove", (e) => { const r = b.getBoundingClientRect(); b.style.transform = "translate(" + ((e.clientX - r.left - r.width / 2) * 0.18) + "px," + ((e.clientY - r.top - r.height / 2) * 0.3) + "px)"; });
+      b.addEventListener("pointerleave", () => { b.style.transform = ""; });
+    });
+    $$("[data-tilt]").forEach((c) => {
+      c.addEventListener("pointermove", (e) => { const r = c.getBoundingClientRect(), x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5; c.style.transform = "perspective(900px) rotateX(" + (-y * 4) + "deg) rotateY(" + (x * 5) + "deg) translateY(-3px)"; });
+      c.addEventListener("pointerleave", () => { c.style.transform = ""; });
+    });
+  }
+
+  // ---------------------------------------------------------------- motion: product demos
+  // Terminal: lines appear in order, then the run repeats.
+  $$("[data-term]").forEach((term) => onReveal(term, async () => {
+    const lines = $$(".l", term);
+    for (;;) {
+      lines.forEach((l) => l.classList.remove("on"));
+      for (const l of lines) { await sleep(Number(l.dataset.wait || 500)); l.classList.add("on"); }
+      if (REDUCE) return;
+      await sleep(4200);
+    }
+  }));
+  // Agent session: messages and tool calls arrive one by one with a typing indicator.
+  $$("[data-chat]").forEach((chat) => onReveal(chat, async () => {
+    const steps = $$("[data-step]", chat), typing = chat.querySelector(".typing");
+    for (;;) {
+      steps.forEach((s) => s.classList.remove("on"));
+      for (const s of steps) {
+        if (typing && s.classList.contains("bot")) { s.before(typing); typing.classList.remove("hidden"); await sleep(REDUCE ? 0 : 900); typing.classList.add("hidden"); }
+        else await sleep(REDUCE ? 0 : Number(s.dataset.wait || 700));
+        s.classList.add("on");
+      }
+      if (REDUCE) return;
+      await sleep(5200);
+    }
+  }));
+  // Mandate meter: calls spend against the daily cap; the switch revokes the mandate.
+  $$("[data-meter]").forEach((meter) => {
+    const cells = $$(".meter-bar i", meter), spent = meter.querySelector("[data-spent]"), sw = meter.querySelector(".switch"), state = meter.querySelector("[data-state]");
+    const cap = Number(meter.dataset.cap || 5), per = cap / cells.length;
+    let n = 0, active = true;
+    const paint = () => { cells.forEach((c, i) => { c.className = i < n ? (n >= cells.length ? "cap" : "on") : ""; }); spent.textContent = "$" + (n * per).toFixed(2); };
+    sw.addEventListener("click", () => { active = !active; sw.setAttribute("aria-checked", String(active)); state.textContent = active ? "active" : "revoked: every payment refused"; });
+    onReveal(meter, async () => {
+      for (;;) {
+        await sleep(REDUCE ? 99999999 : 700);
+        if (!active) continue;
+        n = n >= cells.length ? 0 : n + 1;
+        if (n === cells.length) { paint(); state.textContent = "daily cap reached"; await sleep(1800); state.textContent = "active"; continue; }
+        paint();
+      }
+    });
+  });
+  // Receipt: hashes resolve from noise, then the signature check stamps it.
+  $$("[data-receipt]").forEach((card) => onReveal(card, async () => {
+    const fields = $$("[data-scramble]", card), chars = "abcdef0123456789";
+    for (;;) {
+      card.classList.remove("verified");
+      await Promise.all(fields.map(async (f) => {
+        const finalText = f.dataset.scramble;
+        for (let k = 0; k <= 14; k++) {
+          f.textContent = finalText.split("").map((ch, i) => (i < (finalText.length * k) / 14 ? ch : chars[(Math.random() * 16) | 0])).join("");
+          await sleep(REDUCE ? 0 : 45);
+        }
+      }));
+      await sleep(300);
+      card.classList.add("verified");
+      if (REDUCE) return;
+      await sleep(5200);
+    }
+  }));
+
+  // ---------------------------------------------------------------- WebGPU scenes (loaded on demand)
+  const worldCanvas = $("world");
+  if (worldCanvas && document.body.dataset.threeSrc) {
+    const box = worldCanvas.parentElement;
+    const colors = () => ({ ink: cssVar("--text"), dim: cssVar("--line-2"), accent: cssVar("--signal"), mint: cssVar("--signal"), bg: cssVar("--bg") });
+    const models = catalogData();
+    const start = () => import(document.body.dataset.worldSrc).then((mod) => mod.mount(worldCanvas, {
+      lib: document.body.dataset.threeSrc,
+      colors,
+      onRequest(p) {
+        const m = models.length ? models[(Math.random() * models.length) | 0] : null;
+        const chip = el("div", { class: "world-chip" }, el("i"), m ? m.name + " " : "request ", el("b", { text: m ? "from " + m.from : "quoted" }));
+        chip.style.left = p.x + "px"; chip.style.top = p.y + "px";
+        box.append(chip);
+        setTimeout(() => chip.remove(), 2500);
+      },
+    })).then((scene) => {
+      box.classList.add("world-ready");
+      box.dataset.backend = scene.backend;
+      onScheme(() => scene.setColors(colors()));
+    }).catch(() => {});
+    if ("requestIdleCallback" in window) requestIdleCallback(start, { timeout: 1200 }); else setTimeout(start, 300);
+  }
+  const flowCanvas = $("flow");
+  if (flowCanvas && document.body.dataset.tgpuSrc) {
+    const box = flowCanvas.parentElement;
+    const colors = () => ({ ink: rgba(cssVar("--muted")), accent: rgba(cssVar("--signal")), lanes: ["--chat", "--image", "--voice", "--video"].map((v) => rgba(cssVar(v))) });
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      io.disconnect();
+      import(document.body.dataset.flowSrc).then((mod) => mod.mount(flowCanvas, { lib: document.body.dataset.tgpuSrc, colors })).then((scene) => {
+        if (!scene) return;
+        box.classList.add("flow-ready");
+        onScheme(() => scene.setColors(colors()));
+      }).catch(() => {});
+    }, { rootMargin: "200px" });
+    io.observe(flowCanvas);
+  }
 
   // ---------------------------------------------------------------- playground
   const quoteForm = $("quoteForm");
@@ -126,49 +301,60 @@ export const SITE_JS = String.raw`
       }
     };
     const method = { chat: "chat", image: "image", voice: "speech", video: "video" };
+    const mcpTool = { chat: "moltworld_chat", image: "moltworld_image", voice: "moltworld_speech", video: "moltworld_video" };
     function renderSnippets() {
       const m = current(), body = bodyFor(m), json = JSON.stringify(body);
+      const args = m.modality === "video" ? { model: m.slug, prompt: body.prompt, duration: body.duration, wait: true } : { model: m.slug, ...body };
+      $("snipMcp").textContent = "// Tool call through moltworld-mcp; it quotes, pays within your mandate and returns the result\n" + mcpTool[m.modality] + "(" + JSON.stringify(args, null, 2) + ")";
       $("snipCurl").textContent = "curl -s " + ORIGIN + "/v1/quote -H 'Content-Type: application/json' \\\n  -d '" + JSON.stringify({ model: m.slug, ...body }).replace(/'/g, "'\\''") + "'\n\n# Pay with any x402 client that supports Algorand:\nPOST " + ORIGIN + m.endpoint;
       $("snipTs").textContent = 'import { MoltworldClient } from "@moltworld/sdk";\n\nconst client = new MoltworldClient({ mnemonic: process.env.ALGORAND_MNEMONIC, maxPerRequestUsd: 1 });\nconst res = await client.' + method[m.modality] + '("' + m.slug + '", ' + JSON.stringify(body, null, 2) + ");\nconsole.log(res.data, res.receipt?.txid);";
       $("snipPy").textContent = "from moltworld import MoltworldClient\n\nclient = MoltworldClient(mnemonic=\"...\", max_per_request_usd=1)\nres = client.call(\"" + m.endpoint + "\", " + json.replace(/true/g, "True").replace(/false/g, "False") + ")\nprint(res.data, res.receipt[\"txid\"])";
     }
     function syncForm() {
       const m = current();
-      document.querySelectorAll("[data-for]").forEach((n) => n.classList.toggle("hidden", n.dataset.for !== m.modality));
+      $$("[data-for]").forEach((n) => n.classList.toggle("hidden", n.dataset.for !== m.modality));
       if (m.modality === "chat") { $("qMaxTokens").max = m.maxOutput; $("qMaxNote").textContent = "(max " + m.maxOutput + ")"; if (Number($("qMaxTokens").value) > m.maxOutput) $("qMaxTokens").value = m.maxOutput; }
       if (m.modality === "image") { fill($("qN"), Array.from({ length: m.maxImages }, (_, i) => i + 1)); fill($("qSize"), m.sizes || ["1024x1024"]); }
       if (m.modality === "voice") { $("qVoiceWrap").classList.toggle("hidden", !m.voices); if (m.voices) fill($("qVoice"), m.voices); }
       if (m.modality === "video") { fill($("qDuration"), m.durations || [5], (d) => d + " s"); fill($("qRatio"), m.ratios || ["16:9"]); }
       renderSnippets();
     }
+    // Every render bumps the sequence, so a slow response never overwrites newer output.
+    let seq = 0, debounce = 0;
+    const autoQuote = () => { clearTimeout(debounce); debounce = setTimeout(() => quote(false), 350); };
     qModel.addEventListener("change", syncForm);
-    quoteForm.addEventListener("input", renderSnippets);
-    quoteForm.addEventListener("change", renderSnippets);
+    quoteForm.addEventListener("input", () => { renderSnippets(); autoQuote(); });
+    quoteForm.addEventListener("change", () => { renderSnippets(); autoQuote(); });
     syncForm();
 
-    quoteForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const m = current(), btn = $("quoteBtn");
-      btn.disabled = true;
+    async function quote(fromButton) {
+      clearTimeout(debounce);
+      const m = current(), btn = $("quoteBtn"), mine = ++seq;
+      if (fromButton) { btn.disabled = true; out.replaceChildren(); }
       try {
         const { res, body } = await api("/v1/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: m.slug, ...bodyFor(m) }) });
-        if (!res.ok) { out.replaceChildren(errorBox((body && body.error && body.error.message) || "Quote failed")); return; }
+        if (mine !== seq) return;
+        if (!res.ok) { $("runPrice").textContent = ""; out.replaceChildren(errorBox((body && body.error && body.error.message) || "Quote failed")); return; }
         const q = body.quote, u = q.units;
+        $("runPrice").textContent = q.formattedPrice;
         const units = [u.estimatedInputTokens && u.estimatedInputTokens + " input tokens (estimated)", u.maxOutputTokens && u.maxOutputTokens + " max output tokens", u.images && u.images + " image(s)", u.characters && u.characters + " characters", u.seconds && u.seconds + " seconds"].filter(Boolean).join(", ");
         out.replaceChildren(
           el("div", { class: "note", text: body.name + ": " + (body.payment_flow === "authorization" ? "charged after the answer" : "charged first, refunded if it fails") }),
           el("div", { class: "big-price", text: q.formattedPrice }),
-          kv([["Units", units], ["Upstream cost", "$" + q.upstreamCostUsd.toFixed(6) + " (" + q.costSource + ")"], ["Margin", q.marginPercent + "%"], ["Micro-USDC", String(q.microUsdc)], ["Endpoint", "POST " + body.endpoint]]),
-          el("p", { class: "note", text: body.note })
+          kv([["Units", units], ["Upstream cost", "$" + q.upstreamCostUsd.toFixed(6) + " (" + q.costSource + ")"], ["Margin", q.marginPercent + "%"], ["Micro-USDC", String(q.microUsdc)], ["Endpoint", "POST " + body.endpoint]])
         );
-      } catch { out.replaceChildren(errorBox("Network error.")); } finally { btn.disabled = false; }
-    });
+      } catch { if (mine === seq) out.replaceChildren(errorBox("Network error.")); } finally { btn.disabled = false; }
+    }
+    quoteForm.addEventListener("submit", (e) => { e.preventDefault(); quote(true); });
+    quote(false);
 
     $("challengeBtn").addEventListener("click", async () => {
-      const m = current(), btn = $("challengeBtn");
+      clearTimeout(debounce);
+      const m = current(), btn = $("challengeBtn"), mine = ++seq;
       btn.disabled = true;
       try {
         const res = await fetch(m.endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bodyFor(m)) });
+        if (mine !== seq) return;
         const header = res.headers.get("payment-required");
         if (res.status !== 402 || !header) {
           let msg = "HTTP " + res.status; try { const b = await res.json(); msg = (b.error && b.error.message) || msg; } catch {}
@@ -179,18 +365,172 @@ export const SITE_JS = String.raw`
           el("div", { class: "note", text: "HTTP 402 Payment Required (x402 v" + required.x402Version + ")" }),
           el("div", { class: "big-price", text: fmtMicro(a.amount) }),
           kv([["Scheme", a.scheme], ["Network", a.network], ["Asset (ASA)", a.asset], ["Pay to", a.payTo], ["Flow", (a.extra && a.extra.paymentFlow) || "authorization"], ["Fee payer", a.extra && a.extra.feePayer]]),
-          el("pre", { class: "code" }, el("code", { text: JSON.stringify(required, null, 2) }))
+          el("pre", { class: "code", style: "margin-top:16px" }, el("code", { text: JSON.stringify(required, null, 2) }))
         );
       } catch { out.replaceChildren(errorBox("Network error.")); } finally { btn.disabled = false; }
+    });
+
+    // -------------------------------------------------------------- paid runs (real x402 payments)
+    const payConfig = (() => { const n = $("payConfig"); return n ? JSON.parse(n.textContent) : null; })();
+    let payMod = null, wallets = null, mandate = null, mandateKey = undefined, browserAgent = null, mode = "wallet";
+    const loadPay = async () => (payMod ||= await import(document.body.dataset.paySrc));
+    const short = (a) => a.slice(0, 6) + "..." + a.slice(-4);
+    const cfg = () => ({ origin: ORIGIN, ...payConfig });
+
+    // This browser acts as an agent with its own key, kept only here. Mandates bind to its address.
+    const AGENT_STORE = "moltworld.agentKey";
+    async function ensureBrowserAgent() {
+      if (browserAgent) return browserAgent;
+      const mod = await loadPay();
+      let secret = null;
+      try { secret = localStorage.getItem(AGENT_STORE); } catch {}
+      try { browserAgent = secret ? mod.agentKeyFromSecret(secret) : null; } catch { browserAgent = null; }
+      if (!browserAgent) {
+        browserAgent = mod.generateAgentKey();
+        try { localStorage.setItem(AGENT_STORE, browserAgent.secretKeyB64); } catch {}
+      }
+      $("agentAddr").textContent = "Agent " + short(browserAgent.address);
+      $("agentAddr").title = browserAgent.address;
+      $("agentCopy").dataset.copy = browserAgent.address;
+      return browserAgent;
+    }
+
+    $$("[data-payer-mode]").forEach((b) => b.addEventListener("click", () => {
+      mode = b.dataset.payerMode;
+      $$("[data-payer-mode]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      $$(".payer-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== mode));
+      if (mode === "mandate" && payConfig) ensureBrowserAgent().catch(() => {});
+    }));
+
+    async function refreshWallet() {
+      const addr = wallets && wallets.address;
+      $("walletList").classList.toggle("hidden", !!addr);
+      $("walletActive").classList.toggle("hidden", !addr);
+      if (!addr) return;
+      $("walletAddr").textContent = short(addr);
+      $("walletAddr").title = addr;
+      $("walletBal").textContent = "";
+      const micro = await wallets.usdcBalanceMicro();
+      if (wallets.address === addr) $("walletBal").textContent = micro === null ? "no USDC" : fmtMicro(micro) + " USDC";
+    }
+    async function loadWallets() {
+      if (wallets) return wallets;
+      const list = $("walletList");
+      list.replaceChildren(el("span", { class: "note", text: "Loading wallets" }));
+      try {
+        const mod = await loadPay();
+        wallets = await mod.createWallets(cfg());
+      } catch (err) { list.replaceChildren(errorBox("Wallets unavailable: " + (err && err.message))); throw err; }
+      list.replaceChildren(...wallets.options.map((w) => {
+        const b = el("button", { class: "btn btn-ghost btn-small wallet-btn", type: "button", "data-wallet": w.id });
+        if (w.icon) b.append(el("img", { src: w.icon, alt: "", width: "18", height: "18" }));
+        b.append(w.name);
+        b.addEventListener("click", async () => {
+          b.disabled = true;
+          try { await wallets.connect(w.id); await refreshWallet(); } catch (err) { toast((err && err.message) || "Wallet connection failed"); } finally { b.disabled = false; }
+        });
+        return b;
+      }));
+      wallets.onChange(() => refreshWallet());
+      await refreshWallet();
+      return wallets;
+    }
+    if (payConfig) {
+      $("walletLoad").addEventListener("click", () => loadWallets().catch(() => {}));
+      $("walletOff").addEventListener("click", async () => { await wallets.disconnect(); await refreshWallet(); });
+    }
+
+    async function useMandate(text, agentSecret) {
+      try {
+        const mod = await loadPay();
+        const credential = mod.parseMandate(text);
+        const boundTo = mod.mandateAgent(credential);
+        const key = agentSecret || (await ensureBrowserAgent()).secretKeyB64;
+        if (boundTo && mod.agentKeyFromSecret(key).address !== boundTo) {
+          throw new Error("This mandate is bound to agent " + short(boundTo) + ", not to this browser's agent.");
+        }
+        mod.checkMandate(credential, boundTo ? key : undefined);
+        const id = mod.mandateId(credential);
+        const { res, body } = await api("/v1/mandates/" + id);
+        if (!res.ok) throw new Error("This mandate is not registered with the gateway.");
+        const m = body.mandate;
+        if (m.status !== "active") throw new Error("This mandate is " + m.status + ".");
+        mandate = credential;
+        mandateKey = boundTo ? key : undefined;
+        $("mandateEntry").classList.add("hidden");
+        $("mandateActive").classList.remove("hidden");
+        $("mandateOwner").textContent = short(credential.owner);
+        $("mandateOwner").title = credential.owner;
+        $("mandateLimits").textContent = m.max_per_call + " per call · " + m.spent_24h + " of " + m.daily_cap + " today" + (m.on_chain_cap ? " · cap on-chain" : "");
+      } catch (err) { toast((err && err.message) || "Invalid mandate"); }
+    }
+    if (payConfig) {
+      $("mandateUse").addEventListener("click", () => useMandate($("mandateCred").value));
+      if ($("mandateDev")) $("mandateDev").addEventListener("click", () => useMandate(payConfig.devMandate, payConfig.devAgentKey));
+      $("mandateOff").addEventListener("click", () => { mandate = null; mandateKey = undefined; $("mandateCred").value = ""; $("mandateEntry").classList.remove("hidden"); $("mandateActive").classList.add("hidden"); });
+    }
+
+    const status = (text) => out.replaceChildren(el("div", { class: "run-status" }, el("span", { class: "spinner", "aria-hidden": "true" }), text));
+    function renderResult(m, data) {
+      const box = el("div", { class: "run-result" });
+      if (m.modality === "chat") box.append(el("div", { class: "answer-text", text: data.choices && data.choices[0] ? data.choices[0].message.content : JSON.stringify(data) }));
+      else if (m.modality === "image") box.append(el("div", { class: "image-grid" }, ...(data.data || []).map((d) => el("img", { src: d.url || ("data:image/png;base64," + d.b64_json), alt: "Generated image", loading: "lazy" }))));
+      else if (m.modality === "voice") box.append(el("audio", { controls: "", src: "data:" + (data.mime_type || "audio/mpeg") + ";base64," + data.audio_b64 }));
+      else box.append(el("div", { class: "note", text: "Video job " + data.id + ": " + data.status }));
+      return box;
+    }
+    function renderReceipt(r) {
+      const v = r.verification, rc = r.receipt;
+      const ok = !!(v && v.ok);
+      return el("div", { class: "run-receipt" },
+        el("p", {}, el("span", { class: "badge " + (ok ? "good" : "bad"), text: ok ? "Receipt valid" : "Receipt invalid" }), r.replayed ? " replayed" : ""),
+        kv([["Paid", fmtMicro(r.paidMicro)], ["Rebate", rc && rc.rebateMicro ? fmtMicro(rc.rebateMicro) : undefined], ["Payer", rc && rc.payer], ["Transaction", rc ? txLink(rc.txid) : undefined], ["Upstream", rc ? (rc.upstreamProvider || "") + " / " + (rc.upstreamModel || "") : undefined], ["Signature", v ? String(v.signatureValid) : undefined], ["Request hash", v ? String(v.requestMatches) : undefined], ["Response hash", v ? String(v.responseMatches) : undefined], ["Request", r.requestId]]));
+    }
+
+    $("runBtn").addEventListener("click", async () => {
+      if (!payConfig || !document.body.dataset.paySrc) { out.replaceChildren(errorBox("Paid runs are unavailable on this deployment.")); return; }
+      const m = current(), btn = $("runBtn"), mine = ++seq, cap = Number($("capInput").value) || 1;
+      clearTimeout(debounce);
+      let payer;
+      if (mode === "mandate") {
+        if (!mandate) { $("mandateCred").focus(); out.replaceChildren(errorBox("Add a mandate credential to pay.")); return; }
+        payer = { mandate, agentKey: mandateKey };
+      } else {
+        if (!wallets || !wallets.address) { await loadWallets().catch(() => {}); out.replaceChildren(errorBox("Connect a wallet to pay.")); return; }
+        const signer = wallets.signer();
+        payer = { signer: { address: signer.address, signTransactions: async (txns, idx) => { if (mine === seq) status("Approve the payment in your wallet"); const signed = await signer.signTransactions(txns, idx); if (mine === seq) status("Settling on Algorand"); return signed; } } };
+      }
+      btn.disabled = true;
+      status(mode === "mandate" ? "Paying under the mandate" : "Preparing the payment");
+      try {
+        const mod = await loadPay();
+        const client = mod.createClient(cfg(), payer, cap);
+        const result = await client.call(m.endpoint, bodyFor(m));
+        if (mine !== seq) return;
+        out.replaceChildren(renderResult(m, result.data), renderReceipt(result));
+        if (m.modality === "video" && result.data && result.data.id) {
+          const job = await client.waitForJob(result.data.id, { intervalMs: 3000 });
+          if (mine !== seq) return;
+          const slot = out.querySelector(".run-result");
+          slot.replaceChildren(job.status === "completed" ? el("video", { controls: "", src: job.video_url }) : errorBox("Video failed" + (job.refund ? "; refund " + job.refund.status : "")));
+        }
+        if (mode === "wallet") refreshWallet();
+        if (mode === "mandate") useMandate(JSON.stringify(mandate), mandateKey);
+      } catch (err) {
+        const msg = (err && err.message) || "Payment failed";
+        if (mine === seq) out.replaceChildren(errorBox(/maxAmountPerPayment/.test(msg) ? "Costs more than your max per request ($" + cap + ")." : msg));
+      } finally { btn.disabled = false; }
     });
   }
 
   // ---------------------------------------------------------------- catalog
   const modelList = $("modelList");
   if (modelList) {
-    const cards = Array.from(modelList.querySelectorAll(".model"));
+    const cards = $$(".model", modelList);
     const PAGE = Number(modelList.dataset.page || 12);
-    let filter = "all", query = "", limit = PAGE;
+    const wantedType = new URLSearchParams(location.search).get("type");
+    let filter = $$("[data-filter]").some((b) => b.dataset.filter === wantedType) ? wantedType : "all", query = "", limit = PAGE;
+    $$("[data-filter]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.filter === filter)));
     function renderCatalog() {
       const matches = cards.filter((c) => (filter === "all" || c.dataset.modality === filter) && (!query || c.dataset.search.includes(query)));
       cards.forEach((c) => c.classList.add("hidden"));
@@ -199,9 +539,12 @@ export const SITE_JS = String.raw`
       $("moreBtn").parentElement.classList.toggle("hidden", matches.length <= limit);
       $("moreBtn").textContent = "Show more (" + (matches.length - limit) + ")";
     }
-    document.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => {
-      document.querySelectorAll("[data-filter]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    $$("[data-filter]").forEach((b) => b.addEventListener("click", () => {
+      $$("[data-filter]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       filter = b.dataset.filter; limit = PAGE; renderCatalog();
+      const url = new URL(location.href);
+      if (filter === "all") url.searchParams.delete("type"); else url.searchParams.set("type", filter);
+      history.replaceState(null, "", url);
     }));
     $("search").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); limit = PAGE; renderCatalog(); });
     $("moreBtn").addEventListener("click", () => { limit += PAGE * 2; renderCatalog(); });
@@ -231,9 +574,9 @@ export const SITE_JS = String.raw`
     api("/v1/market").then(({ res, body }) => {
       if (!res.ok) { marketOut.replaceChildren(errorBox("Could not load listings.")); return; }
       if (!body.data.length) { marketOut.replaceChildren(el("p", { class: "note", text: "No live listings yet." })); return; }
-      marketOut.replaceChildren(...body.data.map((l) => el("div", { class: "card", style: "margin-top:10px" },
+      marketOut.replaceChildren(...body.data.map((l) => el("div", { class: "card", style: "margin-top:12px;padding:18px" },
         el("div", { class: "model-top" }, el("strong", { text: l.name }), el("span", { class: "price", text: l.price })),
-        el("p", { class: "note", text: l.description }),
+        el("p", { class: "note", style: "margin:6px 0 10px", text: l.description }),
         el("code", { class: "endpoint", text: "POST " + l.endpoint }))));
     }).catch(() => marketOut.replaceChildren(errorBox("Could not load listings.")));
   }
@@ -293,12 +636,13 @@ export const SITE_JS = String.raw`
 
   // ---------------------------------------------------------------- usage
   if ($("sPaid") || $("recentRows")) {
-    const set = (id, v) => { const n = $(id); if (n) n.textContent = v; };
+    const set = (id, v, animate) => { const n = $(id); if (!n) return; if (animate) countTo(n, String(v)); else n.textContent = v; };
     const fmtUsd = (raw) => {
       if (!raw || raw === "-") return "-";
       const num = parseFloat(String(raw).replace(/[^0-9.]/g, ""));
       return isNaN(num) ? String(raw) : "$" + num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
+    const num = (v) => (typeof v === "number" ? v.toLocaleString() : v);
 
     const renderFacilitator = (f) => {
       if (!f) return;
@@ -307,30 +651,29 @@ export const SITE_JS = String.raw`
       if (f.avg_ticket_usd != null) set("sAvgTicket", "$" + Number(f.avg_ticket_usd).toFixed(2));
       const topBody = $("topModelRows");
       if (topBody && f.top_models && f.top_models.length) {
-        const modelRows = f.top_models.map((m) => el("tr", {},
+        topBody.replaceChildren(...f.top_models.map((m) => el("tr", {},
           el("td", { "data-label": "Model", text: m.model }),
           el("td", { "data-label": "Settles", text: Number(m.settles).toLocaleString() }),
           el("td", { "data-label": "Volume", text: "$" + Number(m.volume_usdc).toFixed(2) }),
           el("td", { "data-label": "Price", text: "$" + m.price_usdc + " USDC" })
-        ));
-        topBody.replaceChildren(...modelRows);
+        )));
       }
     };
 
     api("/v1/stats").then(({ res, body }) => {
       if (!res.ok) return;
       const s = body.metrics;
-      set("sPaid", typeof s.paid_requests === "number" ? s.paid_requests.toLocaleString() : s.paid_requests);
-      set("sPaid24", typeof s.paid_requests_24h === "number" ? s.paid_requests_24h.toLocaleString() : s.paid_requests_24h);
-      set("sGross", fmtUsd(s.gross_usdc)); set("sRebated", fmtUsd(s.rebated_usdc)); set("sNet", fmtUsd(s.net_revenue_usdc));
-      set("sWallets", typeof s.unique_paying_wallets === "number" ? s.unique_paying_wallets.toLocaleString() : s.unique_paying_wallets);
+      set("sPaid", num(s.paid_requests), true);
+      set("sPaid24", num(s.paid_requests_24h));
+      set("sGross", fmtUsd(s.gross_usdc)); set("sRebated", fmtUsd(s.rebated_usdc)); set("sNet", fmtUsd(s.net_revenue_usdc), true);
+      set("sWallets", num(s.unique_paying_wallets), true);
       set("sRepeat", Math.round((s.repeat_payer_rate || 0) * 100) + "%");
-      set("sRefunds", fmtUsd(s.refunded_usdc));
+      set("sRefunds", fmtUsd(s.refunded_usdc), true);
 
       if (body.facilitator) {
         renderFacilitator(body.facilitator);
-      } else {
-        // Direct fallback to facilitator data endpoint if server ran offline
+      } else if ($("topModelRows")) {
+        // Direct fallback to the facilitator's public data when the gateway has none cached.
         fetch("https://facilitator.goplausible.xyz/data/merchants/414f1538ce0d6de4")
           .then((r) => r.json())
           .then((fdata) => {
@@ -340,7 +683,7 @@ export const SITE_JS = String.raw`
               avg_settle_ms: Math.round(fdata.avgSettleMs),
               avg_ticket_usd: fdata.avgTicket,
               top_models: (fdata.resources || []).slice(0, 15).map((r) => ({
-                model: r.url.split("/models/")[1]?.replace(/\/(chat|images|audio|videos)\/.*$/, "") || r.url,
+                model: (r.url.split("/models/")[1] || "").replace(/\/(chat|images|audio|videos)\/.*$/, "") || r.url,
                 settles: r.settles,
                 volume_usdc: r.volume,
                 price_usdc: r.price,

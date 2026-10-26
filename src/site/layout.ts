@@ -1,9 +1,15 @@
 import crypto from "crypto";
+import fs from "fs";
 import type { Context } from "hono";
 import { config } from "../config.js";
-import { navMenus } from "./nav.js";
+import { wordmark } from "./brand.js";
+import { icon } from "./icons.js";
+import { agentTypes } from "./agents.js";
+import { AUDIENCES, NAV_LINKS, navMenus, PRODUCTS } from "./nav.js";
 import { SITE_CSS } from "./styles.js";
 import { SITE_JS } from "./script.js";
+import { WORLD_JS } from "./world.js";
+import { FLOW_JS } from "./flow.js";
 
 export function esc(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
@@ -14,52 +20,80 @@ export function scriptJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 }
 
-const CSS_HASH = crypto.createHash("sha256").update(SITE_CSS).digest("hex").slice(0, 12);
-const JS_HASH = crypto.createHash("sha256").update(SITE_JS).digest("hex").slice(0, 12);
+const hash = (s: string) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 12);
+const JS = "text/javascript; charset=utf-8";
+const ASSETS: Record<string, { body: string; type: string; hash: string }> = {
+  "site.css": { body: SITE_CSS, type: "text/css; charset=utf-8", hash: hash(SITE_CSS) },
+  "site.js": { body: SITE_JS, type: JS, hash: hash(SITE_JS) },
+  "world.js": { body: WORLD_JS, type: JS, hash: hash(WORLD_JS) },
+  "flow.js": { body: FLOW_JS, type: JS, hash: hash(FLOW_JS) },
+};
 
-export function handleCss(c: Context): Response {
-  return c.body(SITE_CSS, 200, { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable" });
+// Browser bundles built by `pnpm vendor` (src/site and dist/site both sit two levels below vendor/):
+// three.js, TypeGPU and the Playground's pay module, plus the chunks they import. Without them the
+// pages still work; the WebGPU scenes keep their static fallbacks and paid runs are unavailable.
+const VENDOR = new URL("../../vendor/", import.meta.url);
+function loadVendor(dir: URL, prefix = "") {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) loadVendor(new URL(`${entry.name}/`, dir), `${prefix}${entry.name}/`);
+    else if (entry.name.endsWith(".js")) {
+      const body = fs.readFileSync(new URL(entry.name, dir), "utf8");
+      ASSETS[`vendor/${prefix}${entry.name}`] = { body, type: JS, hash: hash(body) };
+    }
+  }
 }
-
-export function handleJs(c: Context): Response {
-  return c.body(SITE_JS, 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable" });
+try {
+  loadVendor(VENDOR);
+} catch {
+  console.warn("site: vendor/ missing; run `pnpm vendor` to enable the WebGPU scenes and paid Playground runs");
 }
+const asset = (name: string) => (ASSETS[name] ? `/assets/${name}?v=${ASSETS[name].hash}` : "");
 
-const CHEVRON = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+export function handleAsset(name: string) {
+  return (c: Context): Response => c.body(ASSETS[name].body, 200, { "Content-Type": ASSETS[name].type, "Cache-Control": "public, max-age=31536000, immutable" });
+}
+export const ASSET_NAMES = Object.keys(ASSETS);
+
+const CHEVRON = '<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+const isCurrent = (path: string, href: string) => path === href || path.startsWith(`${href}/`);
 
 function header(path: string): string {
   const network = config.isMainnet ? "Algorand Mainnet" : "Algorand Testnet";
-  const items = navMenus()
+  const menus = navMenus()
     .map((menu) => {
       const external = menu.href.startsWith("http");
-      const active = !external && (path === menu.href || path.startsWith(`${menu.href}/`) || (menu.id === "products" && path === "/models"));
-      const links = menu.links
-        .map((l) => `<li><a class="nav-link" href="${esc(l.href)}"><span class="t">${esc(l.label)}</span><span class="d">${esc(l.description)}</span></a></li>`)
+      const active = !external && (isCurrent(path, menu.href) || (menu.match ?? []).some((m) => isCurrent(path, m)));
+      const groups = menu.groups
+        .map(
+          (g) => `<div class="nav-col${g.minor ? " minor" : ""}"><ul aria-label="${esc(g.title)}">${g.links
+            .map((l) => `<li><a class="nav-link" href="${esc(l.href)}">${g.minor ? "" : `<span class="nav-ic">${icon(l.icon, 16)}</span>`}${esc(l.label)}</a></li>`)
+            .join("")}</ul></div>`
+        )
         .join("");
-      const overview = external ? `Open the docs` : `All ${menu.label.toLowerCase()}`;
       return `<li class="nav-item${active ? " active" : ""}">
           <button class="nav-trigger" type="button" aria-expanded="false" aria-controls="menu-${menu.id}">${menu.label}${CHEVRON}</button>
           <div class="nav-menu" id="menu-${menu.id}" hidden>
-            <ul>${links}</ul>
-            <a class="nav-overview" href="${esc(menu.href)}">${overview}</a>
+            <div class="nav-cols">${groups}</div>
           </div>
         </li>`;
     })
     .join("");
-  return `<header class="site">
+  const links = NAV_LINKS.map((l) => `<li class="nav-item${isCurrent(path, l.href) ? " active" : ""}"><a class="nav-direct" href="${l.href}">${l.label}</a></li>`).join("");
+  return `<header class="site" id="siteHeader">
     <div class="wrap bar">
-      <a class="brand" href="/"><img src="/logo.png" alt="" width="30" height="30"><span>Moltworld</span></a>
+      <a class="brand" href="/" aria-label="Moltworld home">${wordmark()}</a>
       <nav class="primary" id="nav" aria-label="Main">
-        <ul>${items}</ul>
+        <ul class="nav-list">${menus}${links}</ul>
         <div class="nav-mobile-cta">
-          <a class="btn" href="/playground">Open Playground</a>
+          <a class="btn" href="/playground">Open Playground ${icon("arrow", 16)}</a>
           <a class="btn btn-ghost" href="${config.docsUrl}/quickstart">Quickstart</a>
         </div>
       </nav>
       <div class="header-actions">
-        <span class="net" id="netLabel" title="Gateway status">${network}</span>
-        <a class="btn btn-header" href="/playground">Playground</a>
-        <button class="menu-btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
+        <a class="status" id="netStatus" href="/stats" title="Gateway status"><span class="pulse" aria-hidden="true"></span><span id="netLabel">${network}</span></a>
+        <a class="btn btn-header" href="/playground">Playground ${icon("arrow", 14)}</a>
+        <button class="menu-btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="nav"><span class="menu-lines" aria-hidden="true"></span><span class="menu-text">Menu</span></button>
       </div>
     </div>
   </header>`;
@@ -67,23 +101,43 @@ function header(path: string): string {
 
 function footer(): string {
   const docs = config.docsUrl;
-  const col = (title: string, links: Array<[string, string]>) =>
+  const col = (title: string, links: Array<readonly [string, string]>) =>
     `<div><h4>${title}</h4><ul>${links.map(([label, href]) => `<li><a href="${esc(href)}">${esc(label)}</a></li>`).join("")}</ul></div>`;
   return `<footer class="site">
     <div class="wrap">
-      <div class="foot-grid">
+      <div class="foot-top">
         <div class="foot-brand">
-          <a class="brand" href="/"><img src="/logo.png" alt="" width="30" height="30"><span>Moltworld</span></a>
-          <p style="margin:12px 0 0;max-width:34ch">AI models for apps and agents, paid per request in USDC on Algorand.</p>
+          <a class="brand" href="/" aria-label="Moltworld home">${wordmark()}</a>
         </div>
-        ${col("Products", [["Gateway", "/products/gateway"], ["Models", "/models"], ["Mandates", "/products/mandates"], ["Marketplace", "/products/marketplace"], ["Receipts", "/products/receipts"]])}
-        ${col("Solutions", [["Agent frameworks", "/solutions/agents"], ["Developers", "/solutions/developers"], ["API creators", "/solutions/api-creators"], ["Use cases", "/use-cases"]])}
-        ${col("Developers", [["Documentation", docs], ["API reference", `${docs}/api-reference/introduction`], ["Playground", "/playground"], ["llms.txt", "/llms.txt"], ["GitHub", "https://github.com/hackcat29/moltworld-x402"]])}
-        ${col("Status", [["Usage", "/stats"], ["Health", "/health"], ["Receipt keys", "/.well-known/moltworld-receipts.json"], ["x402 descriptor", "/.well-known/x402"]])}
+        <div class="foot-grid">
+          ${col("Product", [["Overview", "/products"], ...PRODUCTS.map((p) => [p.label, p.href] as const), ["Signed receipts", "/products/receipts"], ["Models", "/models"], ["Pricing", "/pricing"]])}
+          ${col("Solutions", [["Overview", "/solutions"], ...AUDIENCES.map((a) => [a.label, a.href] as const)])}
+          ${col("Use cases", [["All use cases", "/use-cases"], ...agentTypes().slice(1, 6).map((t) => [t.short, `/use-cases/${t.slug}`] as const)])}
+          ${col("Developers", [["Developer hub", "/developers"], ["Documentation", docs], ["Quickstart", `${docs}/quickstart`], ["API reference", `${docs}/api-reference/introduction`], ["Playground", "/playground"], ["llms.txt", "/llms.txt"], ["GitHub", "https://github.com/hackcat29/moltworld-x402"]])}
+          ${col("Network", [["Live network", "/stats"], ["Health", "/health"], ["Receipt keys", "/.well-known/moltworld-receipts.json"], ["x402 descriptor", "/.well-known/x402"], ["Agent card", "/.well-known/agent-card.json"]])}
+        </div>
       </div>
-      <div class="foot-legal">Payments go to <span class="mono">${config.payToAddress}</span> on ${config.isMainnet ? "Algorand Mainnet" : "Algorand Testnet"}.</div>
+      <div class="foot-giant" aria-hidden="true">moltworld<span class="dot"></span></div>
+      <div class="foot-legal">
+        <span>Payments go to <span class="mono">${config.payToAddress}</span> on ${config.isMainnet ? "Algorand Mainnet" : "Algorand Testnet"}.</span>
+        <span>MIT licensed</span>
+      </div>
     </div>
   </footer>`;
+}
+
+/** Describes the service to crawlers and agents that read schema.org. */
+function structuredData(origin: string): string {
+  return scriptJson({
+    "@context": "https://schema.org",
+    "@type": "WebAPI",
+    name: "Moltworld",
+    url: origin,
+    description: "Pay-per-request gateway for chat, image, voice and video models, settled in USDC on Algorand through x402.",
+    documentation: config.docsUrl,
+    provider: { "@type": "Organization", name: "Moltworld", url: origin, logo: `${origin}/logo.png` },
+    potentialAction: { "@type": "ConsumeAction", target: `${origin}/v1/models/{model}/chat/completions` },
+  });
 }
 
 export interface PageOptions {
@@ -105,21 +159,32 @@ export function renderPage(c: Context, opts: PageOptions): Response {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(fullTitle)}</title>
   <meta name="description" content="${esc(opts.description)}">
-  <meta name="theme-color" content="#07090e">
+  <meta name="theme-color" content="#0A0A0B" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F4F3EE" media="(prefers-color-scheme: light)">
   <link rel="canonical" href="${origin}${opts.path}">
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="apple-touch-icon" href="/logo.png">
   <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM-readable service description">
-  <link rel="stylesheet" href="/assets/site.css?v=${CSS_HASH}">
+  <link rel="alternate" type="application/json" href="/v1/models" title="Model catalog">
+  <script type="application/ld+json">${structuredData(origin)}</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&display=swap">
+  <link rel="stylesheet" href="${asset("site.css")}">
+  <script>document.documentElement.classList.add("js")</script>
   <meta property="og:title" content="${esc(fullTitle)}">
   <meta property="og:description" content="${esc(opts.description)}">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Moltworld">
   <meta property="og:url" content="${origin}${opts.path}">
-  <meta property="og:image" content="${origin}/logo.png">
-  <meta name="twitter:card" content="summary">
+  <meta property="og:image" content="${origin}/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="${origin}/og.png">
 </head>
-<body data-origin="${origin}" data-explorer="${config.isMainnet ? "https://lora.algokit.io/mainnet" : "https://lora.algokit.io/testnet"}">
+<body data-origin="${origin}" data-explorer="${config.isMainnet ? "https://lora.algokit.io/mainnet" : "https://lora.algokit.io/testnet"}" data-world-src="${asset("world.js")}" data-flow-src="${asset("flow.js")}" data-three-src="${asset("vendor/three.js")}" data-tgpu-src="${asset("vendor/typegpu.js")}" data-pay-src="${asset("vendor/pay.js")}">
   <a class="skip" href="#main">Skip to content</a>
   ${header(opts.path)}
   <main id="main">
@@ -128,7 +193,7 @@ ${opts.body}
   ${footer()}
   <div class="toast" id="toast" role="status"></div>
   ${opts.data ?? ""}
-  <script src="/assets/site.js?v=${JS_HASH}" defer></script>
+  <script src="${asset("site.js")}" defer></script>
 </body>
 </html>`;
   return c.html(html, 200, { "Cache-Control": "public, max-age=60" });

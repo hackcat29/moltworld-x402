@@ -20,12 +20,29 @@ const port = Number(process.env.PORT ?? 3402);
 const harness = await startHarness();
 process.env.FACILITATOR_URL = harness.facilitatorUrl;
 process.env.ALGOD_URL = harness.algodUrl;
+process.env.PUBLIC_ALGOD_URL = harness.algodUrl;
+// Mandates are capped on-chain by a spend counter the simulated ledger models.
+process.env.MANDATE_COUNTER_APP_ID ??= "4242";
 process.env.PUBLIC_DOMAIN ??= `http://127.0.0.1:${port}`;
+
+// A funded wallet on the simulated ledger, offered in the Playground as "Local dev wallet".
+const devWallet = algosdk.generateAccount();
+harness.chain.balances.set(devWallet.addr.toString(), 25_000_000);
+process.env.PLAYGROUND_DEV_WALLET_KEY = Buffer.from(devWallet.sk).toString("base64");
 
 const { app, init } = await import("../src/app.js");
 const { startBackgroundWorkers } = await import("../src/workers/index.js");
 const { signOwnerMessage } = await import("../src/mandates/index.js");
 const { setCreatorFetcherForTests } = await import("../src/routes/market.js");
+const { config } = await import("../src/config.js");
+const { createMandate, generateAgentKey } = await import("../sdk/js/src/index.js");
+harness.chain.counter = {
+  appId: Number(process.env.MANDATE_COUNTER_APP_ID),
+  payTo: config.payToAddress,
+  assetId: Number(config.usdcAsaId),
+  minAmountMicro: Math.round(config.priceMinFloor * 1_000_000),
+  boxes: new Map(),
+};
 await init();
 startBackgroundWorkers();
 
@@ -70,6 +87,16 @@ async function seed() {
   }
   const buyer = createPayer(harness, appFetch);
   await buyer.fetch("http://127.0.0.1/v1/market/weather-now/call", json({ city: "Accra" }));
+
+  // A registered mandate over a funded owner, bound to a dev agent key, offered in the Playground's
+  // mandate mode. It goes through the same draft, verify, delegate and register steps as createMandate.
+  const owner = algosdk.generateAccount();
+  const agent = generateAgentKey();
+  harness.chain.balances.set(owner.addr.toString(), 5_000_000);
+  const sdkFetch = ((input: RequestInfo | URL, init?: RequestInit) => appFetch(new Request(input as any, init))) as typeof fetch;
+  const { credential } = await createMandate("http://127.0.0.1", owner, { agent: agent.address, maxPerCallUsd: 0.5, dailyCapUsd: 2, validDays: 7, label: "Local dev mandate", algodUrl: harness.algodUrl }, sdkFetch);
+  config.playgroundDev.mandate = Buffer.from(JSON.stringify(credential)).toString("base64");
+  config.playgroundDev.agentKey = agent.secretKeyB64;
 }
 
 serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, async () => {
