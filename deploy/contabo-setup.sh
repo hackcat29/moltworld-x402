@@ -84,6 +84,11 @@ ensure_secret RECEIPT_SIGNING_KEY "$(openssl rand -base64 32)"
 ensure_secret ADMIN_TOKEN "$(openssl rand -hex 32)"
 ensure_secret DATABASE_URL "postgres://moltworld:$(get_env POSTGRES_PASSWORD)@127.0.0.1:5432/moltworld"
 
+# Mainnet spend counter for capped mandates (public app id, see ops/OPERATIONS.md). Kept if already set.
+if [ "$(get_env ALGORAND_NETWORK)" = "mainnet" ] && [ -z "$(get_env MANDATE_COUNTER_APP_ID)" ]; then
+  set_env MANDATE_COUNTER_APP_ID 3755263517; echo "   set MANDATE_COUNTER_APP_ID"
+fi
+
 log "Configuring native PostgreSQL database and user"
 systemctl enable --now postgresql
 for i in $(seq 1 15); do
@@ -119,8 +124,8 @@ log "Nginx and SSL"
 mkdir -p /var/www/html /etc/nginx/ssl
 cp deploy/nginx-moltworld.conf /etc/nginx/sites-available/moltworld
 
-# Remove conflicting older configs in sites-enabled (e.g. default, moltworld.conf)
-rm -f /etc/nginx/sites-enabled/*
+# Remove conflicting older moltworld/default configs in sites-enabled without wiping other hosted projects
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/moltworld.conf
 ln -sf /etc/nginx/sites-available/moltworld /etc/nginx/sites-enabled/moltworld
 
 # If a Let's Encrypt certificate exists, use it
