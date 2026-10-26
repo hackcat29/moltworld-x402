@@ -5,6 +5,7 @@ import { defaultModelRegistry } from "../models/registry.js";
 import { getMandate, listMandates, mandateSpendLast24h, MandateRecord, revokeMandate, upsertMandate } from "../ledger/index.js";
 import {
   assembleMandate,
+  ROUNDS_PER_DAY,
   mandateId,
   mandateTeal,
   newMandateSalt,
@@ -16,7 +17,6 @@ import { currentRound } from "../chain/algod.js";
 import { microToUsdString, usdToMicroCeil } from "../pricing/index.js";
 import { apiError } from "../payments/gateway.js";
 
-const ROUNDS_PER_DAY = 30_000; // ~2.9s rounds
 const MESSAGE_MAX_AGE_S = 600;
 
 function freshness(issuedAt: unknown): string | null {
@@ -26,9 +26,13 @@ function freshness(issuedAt: unknown): string | null {
 }
 
 function view(m: MandateRecord, spent?: number) {
+  const terms = parseMandateProgram(new Uint8Array(Buffer.from(m.program_b64, "base64")));
   return {
     id: m.id,
     owner: m.owner,
+    agent: terms?.agent ?? null,
+    // Whether the daily cap is enforced by Algorand (the spend counter), not only by this gateway.
+    on_chain_cap: terms?.counter ? { app_id: terms.counter.appId, cap: microToUsdString(terms.counter.capMicro), window_rounds: terms.counter.windowRounds } : null,
     label: m.label,
     status: m.status,
     max_per_call: microToUsdString(m.max_per_call_micro),
@@ -49,6 +53,10 @@ function view(m: MandateRecord, spent?: number) {
 export async function handleMandateDraft(c: Context): Promise<Response> {
   const body: any = await c.req.json().catch(() => null);
   if (!body || !algosdk.isValidAddress(body.owner ?? "")) return apiError(c, 400, "validation_error", "owner must be an Algorand address.");
+  if (!algosdk.isValidAddress(body.agent ?? "")) {
+    return apiError(c, 400, "validation_error", "agent must be the Algorand address of the agent's own key (moltworld-mcp keygen prints it).");
+  }
+  if (body.agent === body.owner) return apiError(c, 400, "validation_error", "agent must be a separate key from the owner.");
   const maxPerCallUsd = Number(body.max_per_call_usd);
   const dailyCapUsd = Number(body.daily_cap_usd);
   if (!(maxPerCallUsd > 0 && maxPerCallUsd <= 100)) return apiError(c, 400, "validation_error", "max_per_call_usd must be in (0, 100].");
@@ -66,6 +74,10 @@ export async function handleMandateDraft(c: Context): Promise<Response> {
     maxPerCallMicro: usdToMicroCeil(maxPerCallUsd),
     expiryRound: round + Math.ceil(validDays * ROUNDS_PER_DAY),
     salt: newMandateSalt(),
+    agent: String(body.agent),
+    ...(config.mandateCounterAppId
+      ? { counter: { appId: config.mandateCounterAppId, capMicro: usdToMicroCeil(dailyCapUsd), windowRounds: ROUNDS_PER_DAY } }
+      : {}),
   };
   const program = assembleMandate(terms);
   const id = mandateId(program);
@@ -91,13 +103,15 @@ export async function handleMandateDraft(c: Context): Promise<Response> {
       max_per_call_micro: terms.maxPerCallMicro,
       expiry_round: terms.expiryRound,
       current_round: round,
+      agent: terms.agent,
+      counter: terms.counter ? { app_id: terms.counter.appId, cap_micro: terms.counter.capMicro, window_rounds: terms.counter.windowRounds } : null,
     },
     registration,
     next_steps: [
       "Sign the program as a delegated LogicSig with the owner key (algosdk LogicSigAccount.sign) -> delegation_sig.",
       "Add issued_at (unix seconds) to `registration` and sign it with algosdk.signBytes over its canonical JSON -> owner_sig.",
       "POST /v1/mandates with program_b64, delegation_sig, registration (incl. issued_at) and owner_sig.",
-      "Give the agent program_b64 + delegation_sig. It can pay Moltworld, and only Moltworld, within these limits.",
+      "Give the agent program_b64 + delegation_sig. With its own key it can pay Moltworld, and only Moltworld, within these limits; without that key the credential cannot pay.",
     ],
   });
 }
@@ -118,6 +132,7 @@ export async function handleMandateRegister(c: Context): Promise<Response> {
   const program = new Uint8Array(Buffer.from(body.program_b64, "base64"));
   const terms = parseMandateProgram(program);
   if (!terms) return apiError(c, 400, "invalid_mandate", "Program is not a Moltworld mandate.");
+  if (!terms.agent) return apiError(c, 400, "invalid_mandate", "New mandates must be bound to an agent key. Draft one with an agent address.");
   if (terms.payTo !== config.payToAddress || String(terms.assetId) !== config.usdcAsaId) {
     return apiError(c, 400, "invalid_mandate", "Mandate must pay this gateway's address in USDC.");
   }
@@ -132,6 +147,13 @@ export async function handleMandateRegister(c: Context): Promise<Response> {
   const dailyCap = Number(reg.daily_cap_micro);
   if (!(Number.isInteger(dailyCap) && dailyCap >= terms.maxPerCallMicro)) {
     return apiError(c, 400, "validation_error", "daily_cap_micro must be an integer >= the per-call maximum.");
+  }
+  if (terms.counter) {
+    if (terms.counter.appId !== config.mandateCounterAppId) return apiError(c, 400, "invalid_mandate", "Mandate uses a different spend counter than this gateway.");
+    if (terms.counter.capMicro !== dailyCap) return apiError(c, 400, "invalid_mandate", "daily_cap_micro must equal the cap in the program.");
+    if (terms.counter.windowRounds < ROUNDS_PER_DAY) return apiError(c, 400, "invalid_mandate", "The program's cap window is shorter than a day.");
+  } else if (config.mandateCounterAppId) {
+    return apiError(c, 400, "invalid_mandate", "This gateway caps mandates on-chain; draft a new one.");
   }
 
   try {

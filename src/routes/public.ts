@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { ROUNDS_PER_DAY } from "../mandates/index.js";
 import fs from "fs";
 import path from "path";
 import { config } from "../config.js";
@@ -68,6 +69,10 @@ export async function handleHealth(c: Context): Promise<Response> {
     usdc_asset_id: config.usdcAsaId,
     pay_to: config.payToAddress,
     facilitator: config.facilitatorUrl,
+    // Clients rebuild the counter from these terms and compare it with the deployed app's code.
+    mandate_counter: config.mandateCounterAppId
+      ? { app_id: config.mandateCounterAppId, min_amount_micro: Math.round(config.priceMinFloor * 1_000_000), window_rounds: ROUNDS_PER_DAY }
+      : null,
     ledger,
     providers: defaultProviderRegistry.listConfiguredProviders(),
     mock_providers: config.mockProviders,

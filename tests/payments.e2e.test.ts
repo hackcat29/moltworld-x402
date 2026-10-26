@@ -324,11 +324,13 @@ describe("video jobs", () => {
 describe("spending mandates", () => {
   async function setupMandate(opts: { maxPerCallUsd: number; dailyCapUsd: number; allowed?: string[] }) {
     const owner = algosdk.generateAccount();
+    const agent = algosdk.generateAccount();
     harness.chain.balances.set(owner.addr.toString(), 10_000_000);
     const draft = await (
       await appFetch(
         post("/v1/mandates/draft", {
           owner: owner.addr.toString(),
+          agent: agent.addr.toString(),
           max_per_call_usd: opts.maxPerCallUsd,
           daily_cap_usd: opts.dailyCapUsd,
           allowed_models: opts.allowed,
@@ -349,20 +351,32 @@ describe("spending mandates", () => {
       })
     );
     expect(res.status).toBe(201);
-    // Agent-side signer: signs the payment with the delegated LogicSig as the owner.
-    const signer = {
+    // Agent-side signer: signs the payment with the delegated LogicSig as the owner, and the
+    // agent's own key co-signs the transaction id. Without that key, `withoutAgentKey` pays.
+    const signerWith = (agentSk: Uint8Array | null) => ({
       address: owner.addr.toString(),
       signTransactions: async (txns: Uint8Array[], indexes?: number[]) =>
-        txns.map((t, i) =>
-          indexes && !indexes.includes(i) ? null : algosdk.signLogicSigTransactionObject(algosdk.decodeUnsignedTransaction(t), lsig).blob
-        ),
+        txns.map((t, i) => {
+          if (indexes && !indexes.includes(i)) return null;
+          const txn = algosdk.decodeUnsignedTransaction(t);
+          lsig.lsig.args = agentSk ? [algosdk.tealSignFromProgram(agentSk, txn.rawTxID(), program)] : [];
+          return algosdk.signLogicSigTransactionObject(txn, lsig).blob;
+        }),
+    });
+    return {
+      owner,
+      draft,
+      lsig,
+      pay: paymentFetch(harness, appFetch, signerWith(agent.sk)),
+      withoutAgentKey: paymentFetch(harness, appFetch, signerWith(null)),
+      withKey: (sk: Uint8Array) => paymentFetch(harness, appFetch, signerWith(sk)),
     };
-    return { owner, draft, lsig, pay: paymentFetch(harness, appFetch, signer) };
   }
 
   beforeAll(() => {
     // Model the mandate program's on-chain checks in the simulated ledger.
     harness.chain.lsigCheck = (stxn) => {
+      if (stxn.txn.type !== "axfer") return null; // models the payment branch only
       const terms = mandates.parseMandateProgram(stxn.lsig!.logic);
       if (!terms) return "not a mandate";
       if (!mandates.verifyDelegation(stxn.lsig!.logic, Buffer.from(stxn.lsig!.sig!).toString("base64"), stxn.txn.sender.toString())) return "bad delegation";
@@ -371,6 +385,8 @@ describe("spending mandates", () => {
       if (Number(t.assetTransfer!.amount) > terms.maxPerCallMicro) return "amount over per-call max";
       if (Number(t.fee) !== 0) return "fee";
       if (Number(t.lastValid) > terms.expiryRound) return "expired";
+      const agentSig = stxn.lsig!.args?.[0];
+      if (terms.agent && !(agentSig && mandates.verifyAgentSignature(stxn.lsig!.logic, t.rawTxID(), agentSig, terms.agent))) return "agent signature";
       return null;
     };
   });
@@ -386,6 +402,50 @@ describe("spending mandates", () => {
     const last = harness.chain.settled.at(-1)!;
     expect(last.lsig).toBe(true);
     expect(last.from).toBe(owner.addr.toString());
+  });
+
+  it("refuses a leaked credential: without the agent's own key nothing can be paid", async () => {
+    const { withoutAgentKey, withKey } = await setupMandate({ maxPerCallUsd: 0.5, dailyCapUsd: 2 });
+    const settledBefore = harness.chain.settled.length;
+    for (const pay of [withoutAgentKey, withKey(algosdk.generateAccount().sk)]) {
+      const res = await pay("http://localhost/v1/models/gpt/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(chatBody()),
+      });
+      expect(res.status).toBe(402);
+      expect(await res.text()).toContain("mandate_agent_signature_invalid");
+    }
+    expect(harness.chain.settled.length).toBe(settledBefore);
+  });
+
+  it("only drafts and registers mandates bound to a separate agent key", async () => {
+    const owner = algosdk.generateAccount();
+    const noAgent = await appFetch(post("/v1/mandates/draft", { owner: owner.addr.toString(), max_per_call_usd: 1, daily_cap_usd: 5 }));
+    expect(noAgent.status).toBe(400);
+    const sameKey = await appFetch(post("/v1/mandates/draft", { owner: owner.addr.toString(), agent: owner.addr.toString(), max_per_call_usd: 1, daily_cap_usd: 5 }));
+    expect(sameKey.status).toBe(400);
+
+    const unbound = mandates.assembleMandate({
+      payTo: config.payToAddress,
+      assetId: Number(config.usdcAsaId),
+      maxPerCallMicro: 1_000_000,
+      expiryRound: harness.chain.round + 100_000,
+      salt: mandates.newMandateSalt(),
+    });
+    const lsig = new algosdk.LogicSigAccount(unbound);
+    lsig.sign(owner.sk);
+    const registration = { action: "register", mandate_id: mandates.mandateId(unbound), owner: owner.addr.toString(), label: "x", daily_cap_micro: 5_000_000, allowed_models: null, issued_at: Math.floor(Date.now() / 1000) };
+    const res = await appFetch(
+      post("/v1/mandates", {
+        program_b64: Buffer.from(unbound).toString("base64"),
+        delegation_sig: Buffer.from(lsig.lsig.sig!).toString("base64"),
+        registration,
+        owner_sig: mandates.signOwnerMessage(registration, owner.sk),
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("agent");
   });
 
   it("enforces the daily cap, model allow-list and revocation", async () => {
@@ -420,7 +480,7 @@ describe("spending mandates", () => {
     const owner = algosdk.generateAccount();
     const attacker = algosdk.generateAccount();
     const draft = await (
-      await appFetch(post("/v1/mandates/draft", { owner: owner.addr.toString(), max_per_call_usd: 1, daily_cap_usd: 5 }))
+      await appFetch(post("/v1/mandates/draft", { owner: owner.addr.toString(), agent: algosdk.generateAccount().addr.toString(), max_per_call_usd: 1, daily_cap_usd: 5 }))
     ).json();
     const lsig = new algosdk.LogicSigAccount(new Uint8Array(Buffer.from(draft.program_b64, "base64")));
     lsig.sign(owner.sk);

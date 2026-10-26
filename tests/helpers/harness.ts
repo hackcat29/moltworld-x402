@@ -5,6 +5,7 @@ import { ExactAvmScheme as FacilitatorExactAvmScheme } from "@x402/avm/exact/fac
 import { ExactAvmScheme as ClientExactAvmScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import { assembleCounter, counterBoxName, type CounterTerms } from "../../src/mandates/counter.js";
 
 /**
  * End-to-end harness: a mock algod, a facilitator running the reference
@@ -23,7 +24,9 @@ export interface Chain {
   settled: Array<{ txid: string; from: string; to: string; amount: number; lsig: boolean }>;
   failNextSettle: boolean;
   /** Called for lsig-signed payments so tests can model program evaluation. */
-  lsigCheck?: (stxn: algosdk.SignedTransaction) => string | null;
+  lsigCheck?: (stxn: algosdk.SignedTransaction, group: algosdk.SignedTransaction[], index: number) => string | null;
+  /** A modeled mandate spend counter (src/mandates/counter.ts), evaluated like the AVM would. */
+  counter?: CounterTerms & { appId: number; boxes: Map<string, { start: number; spent: number }> };
 }
 
 function listen(server: http.Server): Promise<string> {
@@ -41,8 +44,11 @@ async function readJson(req: http.IncomingMessage): Promise<any> {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
 }
 
+// Browsers build payments against this ledger in the local stack, so it answers cross-origin.
+const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS" };
+
 function send(res: http.ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "Content-Type": "application/json" });
+  res.writeHead(status, { "Content-Type": "application/json", ...CORS });
   res.end(JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 
@@ -50,6 +56,10 @@ export async function startHarness() {
   const chain: Chain = { balances: new Map(), round: 1_000_000, settled: [], failNextSettle: false };
 
   const algod = http.createServer(async (req, res) => {
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, CORS);
+      return res.end();
+    }
     const url = new URL(req.url ?? "/", "http://x");
     if (url.pathname === "/v2/transactions/params") {
       return send(res, 200, {
@@ -62,6 +72,10 @@ export async function startHarness() {
       });
     }
     if (url.pathname === "/v2/status") return send(res, 200, { "last-round": chain.round });
+    const app = url.pathname.match(/^\/v2\/applications\/(\d+)$/);
+    if (app && chain.counter && Number(app[1]) === chain.counter.appId) {
+      return send(res, 200, { id: chain.counter.appId, params: { "approval-program": Buffer.from(assembleCounter(chain.counter)).toString("base64") } });
+    }
     const asset = url.pathname.match(/^\/v2\/accounts\/([A-Z2-7]+)\/assets\/(\d+)$/);
     if (asset) {
       const amount = chain.balances.get(asset[1]);
@@ -75,20 +89,50 @@ export async function startHarness() {
   const feePayer = algosdk.generateAccount();
   const feePayerAddress = feePayer.addr.toString();
 
-  const evaluate = (signed: Uint8Array[]): string | null => {
-    for (const bytes of signed) {
-      const stxn = algosdk.decodeSignedTransaction(bytes);
+  // The spend counter's logic (see src/mandates/counter.ts), applied in group order.
+  const countSpend = (group: algosdk.SignedTransaction[], i: number, pending: Array<() => void>): string | null => {
+    const c = chain.counter!;
+    const txn = group[i].txn;
+    const args = txn.applicationCall?.appArgs ?? [];
+    if (txn.applicationCall?.onComplete !== algosdk.OnApplicationComplete.NoOpOC || args.length !== 4 || new TextDecoder().decode(args[0]) !== "spend") return "counter: bad call";
+    const prev = group[i - 1]?.txn;
+    if (!prev || prev.type !== "axfer" || prev.sender.toString() !== txn.sender.toString()) return "counter: no payment before the call";
+    const t = prev.assetTransfer!;
+    if (Number(t.assetIndex) !== c.assetId || t.receiver.toString() !== c.payTo || Number(t.amount) < c.minAmountMicro) return "counter: not a Moltworld payment";
+    const key = Buffer.from(counterBoxName(txn.sender.toString(), args[1])).toString("hex");
+    const cap = Number(Buffer.from(args[2]).readBigUInt64BE());
+    const window = Number(Buffer.from(args[3]).readBigUInt64BE());
+    let box = c.boxes.get(key) ?? { start: 0, spent: 0 };
+    if (chain.round >= box.start + window) box = { start: chain.round, spent: 0 };
+    const spent = box.spent + Number(t.amount);
+    if (spent > cap) return `counter: cap of ${cap} reached (would be ${spent})`;
+    pending.push(() => c.boxes.set(key, { start: box.start, spent }));
+    return null;
+  };
+
+  const evaluate = (signed: Uint8Array[], commit = false): string | null => {
+    const group = signed.map((bytes) => algosdk.decodeSignedTransaction(bytes));
+    // A group is atomic: counter updates apply only if every transaction passes.
+    const pending: Array<() => void> = [];
+    for (let i = 0; i < group.length; i++) {
+      const stxn = group[i];
       const txn = stxn.txn;
+      if (stxn.lsig) {
+        const problem = chain.lsigCheck?.(stxn, group, i) ?? null;
+        if (problem) return `logic eval error: ${problem}`;
+      }
+      if (txn.type === "appl" && chain.counter && Number(txn.applicationCall!.appIndex) === chain.counter.appId) {
+        const problem = countSpend(group, i, pending);
+        if (problem) return `logic eval error: ${problem}`;
+        continue;
+      }
       if (txn.type !== "axfer") continue;
       const from = txn.sender.toString();
       const amount = Number(txn.assetTransfer!.amount);
-      if (stxn.lsig) {
-        const problem = chain.lsigCheck?.(stxn) ?? null;
-        if (problem) return `logic eval error: ${problem}`;
-      }
       const balance = chain.balances.get(from) ?? 0;
       if (balance < amount) return `overspend: ${from} holds ${balance}, needs ${amount}`;
     }
+    if (commit) pending.forEach((apply) => apply());
     return null;
   };
 
@@ -107,7 +151,7 @@ export async function startHarness() {
         chain.failNextSettle = false;
         throw new Error("mock network rejected the group");
       }
-      const failure = evaluate(txns);
+      const failure = evaluate(txns, true);
       if (failure) throw new Error(failure);
       let id = "";
       for (const bytes of txns) {

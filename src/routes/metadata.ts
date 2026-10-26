@@ -68,7 +68,10 @@ export function handleLlmsTxt(c: Context): Response {
     "- Pay with an x402 client that supports Algorand USDC and retry with Payment-Signature. Each paid response carries a Moltworld-Receipt header: an Ed25519-signed receipt binding the txid to sha256 of your request and of the response body.",
     "- Chat settles after the answer is produced; unused max_tokens budget is rebated in USDC. Image, voice and video settle first and are refunded on-chain if the upstream fails. Video returns a job id to poll at /v1/jobs/{id}.",
     "- Retrying with the same Payment-Signature after a dropped connection returns the original response; it is never charged twice.",
-    "- Agents can pay through an on-chain spending mandate (delegated LogicSig) with per-call, daily and model limits: see /v1/mandates/draft.",
+    "- Agents can pay through an on-chain spending mandate (delegated LogicSig) with per-call, daily and model limits: see /v1/mandates/draft. Every mandate is bound to the agent's own key (`moltworld-mcp keygen`): each payment carries the agent's ed25519 signature over its txid as LogicSig arg 0, so the credential alone cannot pay.",
+    ...(config.mandateCounterAppId
+      ? [`- Mandates here are capped on-chain: each payment is grouped with a call to the immutable spend counter app ${config.mandateCounterAppId} (args: "spend", salt, cap, window), which rejects spend over the cap per window.`]
+      : []),
     "- Choose a model that matches the requested modality and respect the input limits in the catalog and payment response.",
     "",
     "## Discovery and service links",

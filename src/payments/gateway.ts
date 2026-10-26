@@ -23,6 +23,7 @@ import { coordination } from "./coordination.js";
 import { getPaymentState, PaymentState, setPaymentState, stateFromTransport } from "./state.js";
 import {
   logicSigProgramFromPayload,
+  agentSignatureValid,
   mandateId,
   parseMandateProgram,
   payerFromPayload,
@@ -165,13 +166,18 @@ export function registerPaymentHooks(server: x402ResourceServer): void {
 
     // Mandate payments: on-chain terms are enforced by Algorand; caps and allow-lists here.
     const program = logicSigProgramFromPayload(ctx.paymentPayload);
-    if (program && parseMandateProgram(program)) {
+    const mandateTerms = program ? parseMandateProgram(program) : null;
+    if (program && mandateTerms) {
       const id = mandateId(program);
       const mandate = await getMandate(id);
       if (!mandate || mandate.status !== "active") {
         return abortWith(state, "mandate_not_active", `Mandate ${id} is ${mandate ? mandate.status : "not registered"}.`);
       }
       if (mandate.owner !== payer) return abortWith(state, "mandate_owner_mismatch", "Mandate was registered by a different owner.");
+      // Algorand enforces this too; checking here gives a clear error before any settlement.
+      if (!agentSignatureValid(ctx.paymentPayload, mandateTerms)) {
+        return abortWith(state, "mandate_agent_signature_invalid", "Payment is not signed by the mandate's agent key.");
+      }
       if (state.model && mandate.allowed_models?.length && !mandate.allowed_models.includes(state.model.slug)) {
         return abortWith(state, "mandate_model_not_allowed", `Mandate does not allow model '${state.model.slug}'.`);
       }

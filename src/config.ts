@@ -34,6 +34,12 @@ export interface GatewayConfig {
   payToAddress: string;
   algodUrl: string;
   algodToken: string;
+  /** App id of the deployed mandate spend counter; when set, new mandates are capped on-chain. */
+  mandateCounterAppId: number | null;
+  /** Algod the Playground's browser client builds payments with; empty means the SDK's public default. */
+  publicAlgodUrl: string;
+  /** Local-ledger signers for the Playground. Never set on mainnet or in production. */
+  playgroundDev: { walletKey?: string; mandate?: string; agentKey?: string };
   openrouterApiKey?: string;
   openaiApiKey?: string;
   falKey?: string;
@@ -103,6 +109,12 @@ export const config: GatewayConfig = {
     process.env.ALGOD_URL?.trim() ||
     (isMainnet ? "https://mainnet-api.algonode.cloud" : "https://testnet-api.algonode.cloud"),
   algodToken: process.env.ALGOD_TOKEN?.trim() || "",
+  publicAlgodUrl: process.env.PUBLIC_ALGOD_URL?.trim() || "",
+  mandateCounterAppId: Number(process.env.MANDATE_COUNTER_APP_ID) > 0 ? Number(process.env.MANDATE_COUNTER_APP_ID) : null,
+  playgroundDev:
+    isMainnet || process.env.NODE_ENV === "production"
+      ? {}
+      : { walletKey: process.env.PLAYGROUND_DEV_WALLET_KEY?.trim() || undefined, mandate: process.env.PLAYGROUND_DEV_MANDATE?.trim() || undefined },
   openrouterApiKey: process.env.OPENROUTER_API_KEY?.trim() || undefined,
   openaiApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
   falKey: process.env.FAL_KEY?.trim() || undefined,
