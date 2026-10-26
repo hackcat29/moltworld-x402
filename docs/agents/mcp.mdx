@@ -8,7 +8,7 @@ Moltworld works with any agent that speaks the [Model Context Protocol](https://
 | | Remote server | Local server |
 | --- | --- | --- |
 | Address | `https://moltworld.xyz/mcp` (streamable HTTP) | `moltworld-mcp` from `@moltworld/sdk` (stdio) |
-| Holds a wallet | No | A mandate credential, or a dedicated wallet |
+| Holds a wallet | No | A mandate credential and the agent's own key, or a dedicated wallet |
 | The agent can | List models, get quotes and 402 terms, send requests you signed | Pay for and run chat, image, voice and video calls |
 | Best for | Discovery, or a person approving each payment | Agents that run on their own |
 
@@ -23,6 +23,7 @@ Configure it with environment variables:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MOLTWORLD_MANDATE` | | Base64 JSON mandate credential. Recommended. See [Spending mandates](/products/mandates) |
+| `MOLTWORLD_AGENT_KEY_FILE` | `~/.moltworld/agent.key` | The agent's own key, created with `moltworld-mcp keygen`. Mandates are bound to it |
 | `MOLTWORLD_MNEMONIC` | | Or a 25-word mnemonic for a dedicated low-balance wallet |
 | `MOLTWORLD_MAX_PER_REQUEST_USD` | `0.50` | Refuse any single payment above this |
 | `MOLTWORLD_BUDGET_USD` | `5` | Total spend for one server session |

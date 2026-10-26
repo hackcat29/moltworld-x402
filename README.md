@@ -30,13 +30,22 @@ x402 is the only way in: there are no API keys or prepaid balances to fall back 
 
 **Spending mandates.** An owner delegates a small LogicSig program to an agent. The agent can
 then sign x402 payments *as the owner's account*, but the Algorand protocol only lets those
-payments be USDC to Moltworld, at most N per call, with zero fee, until an expiry round.
-Moltworld additionally enforces a rolling 24h cap and a model allow-list per mandate, and
-because the payee is pinned, a server-side revocation stops all spending. The reference x402
-facilitator accepts LogicSig-signed payments, so this works with standard x402 clients. The
-program is assembled deterministically (checked byte-for-byte against algod's compiler), the
-SDK verifies a draft before the owner signs it, and the test suite runs the real program
-through Algorand testnet `simulate`.
+payments be USDC to Moltworld, at most N per call, with zero fee, until an expiry round, and only
+with a signature from the agent's own key over the transaction id (`ed25519verify`). The agent
+creates that key itself (`moltworld-mcp keygen`) and only shares its address, so the credential
+the owner hands over is not a bearer token: on its own it cannot pay.
+The daily cap is enforced on-chain too: each payment is grouped with a call to an immutable
+spend counter app (`src/mandates/counter.ts`) whose cap and window are fixed by the
+owner-signed program, and the SDK checks the deployed app's code byte-for-byte before the owner
+signs. Moltworld additionally enforces a model allow-list and a rolling 24h check, and because
+the payee is pinned, a server-side revocation stops all spending.
+
+| | |
+| --- | --- |
+| **Spend counter** | Mainnet app [`3755263517`](https://lora.algokit.io/mainnet/application/3755263517), testnet app [`775006909`](https://lora.algokit.io/testnet/application/775006909). No update or delete path. `GET /health` publishes the active one. |
+| **Standard x402** | A capped payment is a three-transaction group (facilitator fee payment, USDC transfer, counter call) within the x402 AVM `exact` rules. It settles through the GoPlausible facilitator like any other payment, e.g. testnet [`MCV7K2NC…`](https://lora.algokit.io/testnet/transaction/MCV7K2NCHTSD62SA6ZGY6VEIAJSCMVG562ULACW6NANOCNRINYNQ). Wallet payments are unchanged. |
+| **Verified** | The mandate and counter programs are assembled deterministically and checked byte-for-byte against algod's compiler and the deployed apps; the test suite runs both through Algorand `simulate`, including an over-cap payment the AVM rejects. |
+| **Clients** | TypeScript and Python SDKs, the local MCP server and the Playground all build bound and capped mandate payments. |
 
 **Creator marketplace.** Anyone with an Algorand wallet can sell their own HTTPS API through
 Moltworld's x402 checkout. Listings are wallet-signed and reviewed; calls are forwarded with an
@@ -56,6 +65,17 @@ res.verification?.ok; // receipt signature + request/response hashes checked
 from moltworld import MoltworldClient  # sdk/python
 client = MoltworldClient(mnemonic="...", max_per_request_usd=0.25, budget_usd=5)
 res = client.chat("gpt-4o", [{"role": "user", "content": "Hi"}], max_tokens=300)
+```
+
+An agent paying under a mandate holds its own key and the owner's credential:
+
+```ts
+const mandate = JSON.parse(Buffer.from(process.env.MOLTWORLD_MANDATE!, "base64").toString("utf8"));
+const client = new MoltworldClient({ mandate, agentKey: process.env.AGENT_KEY, budgetUsd: 5 });
+```
+
+```python
+client = MoltworldClient(mandate=os.environ["MOLTWORLD_MANDATE"], agent_key=os.environ["AGENT_KEY"], budget_usd=5)
 ```
 
 Agents: the remote MCP server is at `https://moltworld.xyz/mcp` (quote, 402 challenge,
@@ -89,7 +109,7 @@ curl -s https://moltworld.xyz/v1/quote -H 'Content-Type: application/json' \
 
 ## Catalog
 
-41 models: chat through OpenRouter (24, rates synced from OpenRouter's live price list), image
+Chat through OpenRouter (rates synced from OpenRouter's live price list), image
 and video through fal.ai (Veo 3.1 Fast, Kling v3, Wan 3.0, MiniMax H3, FLUX.2 Pro, Qwen Image 3,
 Seedream 5.0 Lite, Grok Imagine 2.0, Recraft V4.1/V3), OpenAI (gpt-image-1, TTS, Sora 2 Pro)
 and ElevenLabs. Each entry is named after the upstream that serves it. At startup the gateway
@@ -123,6 +143,9 @@ pnpm build        # typecheck gateway + SDK
 pnpm test         # unit, e2e (real x402 client + reference facilitator logic), mandates, SDK, Python interop
 pnpm test:ui      # Playwright: every page, 6 viewports x light/dark, header menus and every widget
 pnpm stack:local  # whole stack offline at http://127.0.0.1:3402 with seeded traffic
+pnpm vendor       # bundle three.js, TypeGPU and the browser payment client into vendor/
+pnpm brand        # re-render the logo, favicons and OG image from src/site/brand.ts
+pnpm mandate:counter  # deploy a spend counter (DEPLOYER_KEY, see ops/OPERATIONS.md)
 ```
 
 `pnpm stack:local` runs the gateway against a simulated Algorand ledger and a facilitator built
@@ -130,9 +153,22 @@ from the reference `@x402/avm` logic, with mock models. It needs no keys or fund
 
 ## Site and docs
 
-The site is rendered by the gateway itself (`src/site`): product, solution and use-case pages,
-the model catalog, a Playground and public usage. The header links each section through a
-dropdown, and every page is plain HTML with one shared stylesheet and script.
+The site is rendered by the gateway itself (`src/site`): platform, solution and use-case pages,
+the model catalog, pricing, a developer hub, a Playground and the live network. Every page is
+plain HTML with one shared stylesheet and script. Two scenes run on WebGPU frameworks and load
+on demand: the hero world (three.js `WebGPURenderer` with TSL, falling back to WebGL2) and the
+request-flow field (TypeGPU compute and render pipelines). Both libraries are bundled into
+`vendor/` by `pnpm vendor` (run by `build`, `dev`, `start`, `stack:local` and `test:ui`) and served
+from the gateway's own origin; without the bundles the pages keep static fallbacks.
+
+The Playground makes real x402 calls. `web/pay.ts` runs the SDK in the browser with one of two
+signers: a wallet connected through use-wallet (Pera, Defly, Lute, Kibisis), which approves each
+USDC transfer, or a pasted `MOLTWORLD_MANDATE` credential bound to an agent key the browser
+generates and keeps, which signs within the mandate's on-chain limits like an agent would. A
+per-request cap is enforced before anything is signed, and every receipt is verified in the
+browser. Browsers build payments against `PUBLIC_ALGOD_URL`, or the
+SDK's public node when it is unset. `pnpm stack:local` also offers a funded "Local dev wallet" and a
+registered dev mandate on the simulated ledger; both are refused on mainnet and in production.
 
 `docs/` is a [Mintlify](https://mintlify.com) project for docs.moltworld.xyz: guides, agent
 setup (MCP, OpenClaw, Hermes Agent, Claude Code, A2A), SDK references, and an API reference

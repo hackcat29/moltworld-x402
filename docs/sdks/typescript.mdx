@@ -27,6 +27,7 @@ const client = new MoltworldClient({
 | `mnemonic` | | 25-word Algorand mnemonic |
 | `privateKeyBase64` | | 64-byte secret key, base64 |
 | `mandate` | | Mandate credential. See [Spending mandates](/products/mandates) |
+| `agentKey` | | The agent's own key (base64 secret) that the mandate is bound to |
 | `maxPerRequestUsd` | `1` | Refuse any single payment above this |
 | `budgetUsd` | none | Refuse payments that would take this client's total above this |
 | `expectedPayTo` | from `/health` | Refuse to pay any other address |
@@ -72,7 +73,7 @@ client.address;                             // paying address
 ## Mandates
 
 ```ts
-import { createMandate, revokeMandate, verifyDraft, createMandateSigner } from "@moltworld/sdk";
+import { generateAgentKey, createMandate, revokeMandate, verifyDraft, createMandateSigner } from "@moltworld/sdk";
 ```
 
 See [Spending mandates](/products/mandates).

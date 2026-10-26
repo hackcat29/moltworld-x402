@@ -74,8 +74,33 @@ Back the signing key up offline. Losing it without rotating makes past receipts 
 Mandate payments are identified by their LogicSig program. Payments from an unregistered or
 revoked Moltworld mandate are refused. Owners revoke with a signed message
 (`POST /v1/mandates/{id}/revoke`); revocation is final. On-chain limits (payee, per-call
-maximum, expiry, zero fee) cannot be changed after signing; the daily cap and model allow-list
-are set at registration.
+maximum, expiry, zero fee, agent co-signature) cannot be changed after signing; the model
+allow-list is set at registration.
+
+New mandates must be bound to an agent key (`agent` on `/v1/mandates/draft`). Mandates registered
+before that keep working until they expire.
+
+### Spend counter (on-chain daily cap)
+
+With `MANDATE_COUNTER_APP_ID` set, new mandates are capped on-chain by the spend counter app.
+Deploy one per network and payTo address; it is immutable, so a deployment is permanent:
+
+```bash
+DEPLOYER_KEY=<base64 key> ALGORAND_NETWORK=testnet pnpm mandate:counter
+DEPLOYER_KEY=<base64 key> ALGORAND_NETWORK=mainnet CONFIRM_MAINNET=yes pnpm mandate:counter
+```
+
+The script funds the app account for `FUND_FOR_BOXES` counters (default 10). Each mandate's first
+payment creates a box that locks 0.0217 ALGO on the app account; keep the account funded (send
+ALGO to its address) or capped payments fail.
+
+| Network | App | App account | Pays |
+| --- | --- | --- | --- |
+| mainnet | 3755263517 | JN3XDTAJ433LFLRZ656H35TYN4JRKJXVG457PQDG4XRYLJ6NF33WNAZWFA | NAPHTASV...HIIIZZIIXY, USDC 31566704 |
+| testnet | 775006909 | | TQWEL54T...WHDMXU, USDC 10458941 |
+
+Production sets `MANDATE_COUNTER_APP_ID=3755263517`. The mainnet app was funded for 10 counters
+(0.317 ALGO); top it up as mandates are created.
 
 ## Stats integrity
 

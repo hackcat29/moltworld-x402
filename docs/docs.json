@@ -4,9 +4,9 @@
   "name": "Moltworld",
   "description": "AI models for apps and agents, paid per request in USDC on Algorand through x402.",
   "colors": {
-    "primary": "#00875F",
-    "light": "#00E5A3",
-    "dark": "#00875F"
+    "primary": "#0E9F66",
+    "light": "#3DDC97",
+    "dark": "#0E9F66"
   },
   "logo": {
     "light": "/logo/logo.png",
