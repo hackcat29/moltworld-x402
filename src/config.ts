@@ -42,7 +42,6 @@ export interface GatewayConfig {
   playgroundDev: { walletKey?: string; mandate?: string; agentKey?: string };
   openrouterApiKey?: string;
   openaiApiKey?: string;
-  falKey?: string;
   elevenlabsApiKey?: string;
   databaseUrl?: string;
   redisUrl?: string;
@@ -117,7 +116,6 @@ export const config: GatewayConfig = {
       : { walletKey: process.env.PLAYGROUND_DEV_WALLET_KEY?.trim() || undefined, mandate: process.env.PLAYGROUND_DEV_MANDATE?.trim() || undefined },
   openrouterApiKey: process.env.OPENROUTER_API_KEY?.trim() || undefined,
   openaiApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
-  falKey: process.env.FAL_KEY?.trim() || undefined,
   elevenlabsApiKey: process.env.ELEVENLABS_API_KEY?.trim() || undefined,
   databaseUrl: process.env.DATABASE_URL?.trim() || undefined,
   redisUrl: process.env.REDIS_URL?.trim() || undefined,

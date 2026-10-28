@@ -11,7 +11,6 @@ print(client.quote("gpt-4o", {"messages": [{"role": "user", "content": "Hi"}], "
 result = client.chat("gpt-4o", [{"role": "user", "content": "Hi"}], max_tokens=300)
 print(result.data["choices"][0]["message"]["content"], result.verified, result.receipt["txid"])
 
-job = client.video("kling-v3.0-std", "waves at sunset", duration=5, wait=True).data
 ```
 
 The client refuses to pay any address other than the gateway's published `pay_to`, anything

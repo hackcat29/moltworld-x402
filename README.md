@@ -6,7 +6,7 @@
 [![CI](https://github.com/hackcat29/moltworld-x402/actions/workflows/ci.yml/badge.svg)](https://github.com/hackcat29/moltworld-x402/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-black)](#license)
 
-One HTTP request calls any chat, image, voice or video model. The 402 challenge carries the exact
+One HTTP request calls any chat, image or voice model. The 402 challenge carries the exact
 price of that request, one USDC transfer pays it (no account, no API key, no ALGO needed), and the
 answer comes back with an Ed25519-signed receipt tied to the on-chain settlement. Agents can pay on
 their own under a **mandate**: a spending limit the Algorand protocol enforces, bound to the
@@ -66,7 +66,7 @@ and budget. Setup guides: [MCP](docs/agents/mcp.mdx), [Claude Code](docs/agents/
 | | |
 | --- | --- |
 | **Priced per request** | The 402 challenge is computed from the body: input tokens + `max_tokens`, images, characters or seconds, at live upstream rates plus a published 3% margin ($0.001 minimum). `POST /v1/quote` returns the same amount for free. |
-| **Never charged for nothing** | Invalid input gets 400 before any challenge. Chat settles only after the answer exists. Image, voice and video settle first and are refunded on-chain if the model fails. |
+| **Never charged for nothing** | Invalid input gets 400 before any challenge. Chat settles only after the answer exists. Image and voice settle first and are refunded on-chain if the model fails. |
 | **Usage rebates** | Chat is paid for its full `max_tokens` budget (x402 `exact`); the unused part is credited back and paid out in USDC. |
 | **Safe retries** | A payment is keyed by its Algorand txid. Retrying with the same `Payment-Signature` returns the original response; it never settles twice. |
 | **Concurrency-safe** | Unsettled requests from one wallet are capped at its on-chain USDC balance, so parallel requests cannot outspend it. |
@@ -140,7 +140,7 @@ call. See [moltworld.xyz/use-cases](https://moltworld.xyz/use-cases).
 
 | Endpoint | |
 | --- | --- |
-| `POST /v1/models/{model}/chat/completions` · `images/generations` · `audio/speech` · `videos/generations` | Paid (x402) |
+| `POST /v1/models/{model}/chat/completions` · `images/generations` · `audio/speech` | Paid (x402) |
 | `POST /v1/market/{slug}/call` | Paid (x402), creator APIs |
 | `POST /v1/quote` | Exact price of a body |
 | `GET /v1/models` | Catalog with upstream ids, cost basis, from-prices (`?include=unavailable` shows withheld models and why) |
@@ -154,10 +154,12 @@ call. See [moltworld.xyz/use-cases](https://moltworld.xyz/use-cases).
 
 ## Catalog
 
-Every model, as it ships: chat through OpenRouter (rates synced from its live price list), image
-and video through fal.ai (Veo, Kling, Wan, MiniMax, FLUX.2, Qwen Image, Seedream, Grok Imagine,
-Recraft), OpenAI (GPT Image, TTS, Sora) and ElevenLabs. At startup the gateway checks every
-upstream id against the provider's catalog; anything it cannot verify is withheld and never sold.
+The active catalog provides chat through OpenRouter, GPT Image 1.5 and speech through
+OpenAI, and speech through ElevenLabs. fal.ai models and retired OpenAI models are
+not offered. Video generation is currently unavailable. Removed model endpoints
+return 404 before payment; historical receipts and job records remain accessible.
+At startup the gateway checks configured upstream IDs against provider catalogs
+and excludes OpenAI models whose shutdown date has passed.
 
 ## Architecture
 
@@ -173,7 +175,7 @@ Client / agent ──HTTPS──▶ Cloudflare (DNS, TLS, pass-through Worker)
                               │         mandate checks, duplicate-payment locks
                               ├── PostgreSQL 16 (ledger)   Redis 7 (coordination)
                               ├── workers: video polling, refunds, batched payouts
-                              └── OpenRouter · fal.ai · OpenAI · ElevenLabs
+                              └── OpenRouter · OpenAI · ElevenLabs
 ```
 
 ## Development

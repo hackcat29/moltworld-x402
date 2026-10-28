@@ -241,15 +241,12 @@ async function runViewport(browser, vp, scheme, pages) {
   check("402 challenge amount equals the quote", challengePrice === expected, `${challengePrice} vs ${expected}`);
   check("402 challenge shows payTo", (await page.textContent("#quoteOut")).includes("Pay to"));
 
-  await page.selectOption("#qModel", "veo-3.1-fast");
-  check("video fields shown for video model", await page.locator('[data-for="video"]').isVisible());
-  check("chat fields hidden for video model", !(await page.locator('[data-for="chat"]').isVisible()));
-  const durations = await page.locator("#qDuration option").allTextContents();
-  check("video durations follow the model", durations.join(",") === "4 s,6 s,8 s", durations.join(","));
+  await page.selectOption("#qModel", "gpt-image-1.5");
+  check("image fields shown", await page.locator('[data-for="image"]').isVisible());
+  check("chat fields hidden for image model", !(await page.locator('[data-for="chat"]').isVisible()));
   await page.click("#quoteBtn");
-  await page.waitForFunction(() => document.querySelector("#quoteOut")?.textContent.includes("seconds"));
-  check("video quote shows seconds", true);
-  check("snippet follows the video model", (await page.textContent("#snipCurl")).includes("/videos/generations"));
+  await page.waitForFunction(() => document.querySelector("#quoteOut")?.textContent.includes("images"));
+  check("snippet follows the image model", (await page.textContent("#snipCurl")).includes("/images/generations"));
 
   await page.selectOption("#qModel", "gpt");
   await page.fill("#qMaxTokens", "999999");
@@ -325,11 +322,9 @@ async function runViewport(browser, vp, scheme, pages) {
 
   // Models: catalog filters, paging, search, link to the playground
   await page.goto(BASE + "/models", { waitUntil: "networkidle" });
-  await page.click('[data-filter="video"]');
-  const videoCards = page.locator("#modelList .model:not(.hidden)");
-  const videoCount = await videoCards.count();
-  const modalities = await videoCards.evaluateAll((els) => els.map((e) => e.dataset.modality));
-  check("video filter shows only video models", videoCount === 5 && modalities.every((m) => m === "video"), `${videoCount} ${modalities}`);
+  check("removed video category is not offered", await page.locator('[data-filter="video"]').count() === 0);
+  await page.click('[data-filter="image"]');
+  check("image filter shows the retained image model", await page.locator('#modelList .model:not(.hidden)').count() === 1);
   await page.click('[data-filter="all"]');
   check("catalog paginates", (await page.locator("#modelList .model:not(.hidden)").count()) === 12);
   await page.click("#moreBtn");
@@ -339,10 +334,10 @@ async function runViewport(browser, vp, scheme, pages) {
   check("search filters by name", names.length > 0 && names.every((n) => n.toLowerCase().includes("claude")), names.join(","));
   await page.fill("#search", "zzz-no-such-model");
   check("empty search shows a message", await page.locator("#noModels").isVisible());
-  await page.fill("#search", "flux");
-  await page.locator('#modelList .model:not(.hidden) a[href="/playground?model=flux-2-pro"]').click();
-  await page.waitForURL(BASE + "/playground?model=flux-2-pro");
-  check("'Try in Playground' preselects the model", (await page.inputValue("#qModel")) === "flux-2-pro");
+  await page.fill("#search", "gpt-image");
+  await page.locator('#modelList .model:not(.hidden) a[href="/playground?model=gpt-image-1.5"]').click();
+  await page.waitForURL(BASE + "/playground?model=gpt-image-1.5");
+  check("'Try in Playground' preselects the model", (await page.inputValue("#qModel")) === "gpt-image-1.5");
 
   // Mandate lookup
   await page.goto(BASE + "/products/mandates", { waitUntil: "networkidle" });
@@ -399,6 +394,8 @@ async function runViewport(browser, vp, scheme, pages) {
 }
 
 fs.mkdirSync(SHOTS, { recursive: true });
+const selectedViewports = VIEWPORTS.filter(v => !process.env.UI_VIEWPORT || v.name === process.env.UI_VIEWPORT);
+if (!selectedViewports.length) throw new Error("Unknown UI_VIEWPORT");
 const stack = await startStack();
 const browser = await chromium.launch();
 try {
@@ -407,7 +404,7 @@ try {
   console.log(`${pages.length} pages: ${pages.join(" ")}`);
   check("internal links all resolve", broken.length === 0, broken.join(", "));
   check("every section has pages", ["/products", "/solutions", "/use-cases", "/playground", "/models", "/stats", "/pricing", "/developers", "/use-cases/coding-agents", "/solutions/agent-allowance"].every((p) => pages.includes(p)), pages.join(","));
-  for (const vp of VIEWPORTS) {
+  for (const vp of selectedViewports) {
     for (const scheme of ["light", "dark"]) {
       try {
         await runViewport(browser, vp, scheme, pages);
@@ -422,7 +419,7 @@ try {
 }
 
 const failed = results.filter((r) => !r.ok);
-const summary = { total: results.length, passed: results.length - failed.length, failed: failed.length, viewports: VIEWPORTS.length * 2, screenshots: SHOTS };
+const summary = { total: results.length, passed: results.length - failed.length, failed: failed.length, viewports: selectedViewports.length * 2, screenshots: SHOTS };
 fs.writeFileSync(path.join(SHOTS, "results.json"), JSON.stringify({ summary, results }, null, 2));
 console.log(JSON.stringify(summary));
 process.exit(failed.length ? 1 : 0);

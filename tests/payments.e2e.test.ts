@@ -245,7 +245,7 @@ describe("chat (authorization flow)", () => {
 describe("image and voice (upfront flow)", () => {
   it("settles before generation and returns a receipt", async () => {
     const payer = createPayer(harness, appFetch);
-    const res = await payer.fetch("http://localhost/v1/models/flux-2-pro/images/generations", {
+    const res = await payer.fetch("http://localhost/v1/models/gpt-image-1.5/images/generations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: "a lighthouse" }),
@@ -253,7 +253,7 @@ describe("image and voice (upfront flow)", () => {
     expect(res.status).toBe(200);
     const { valid, receipt } = await verifyReceipt(res.headers.get("moltworld-receipt")!);
     expect(valid).toBe(true);
-    expect(receipt.model).toBe("flux-2-pro");
+    expect(receipt.model).toBe("gpt-image-1.5");
   });
 
   it("refunds on-chain when the upstream fails after settlement", async () => {
@@ -293,45 +293,22 @@ describe("image and voice (upfront flow)", () => {
   });
 });
 
-describe("video jobs", () => {
-  it("returns a job, completes it via the poller", async () => {
-    const payer = createPayer(harness, appFetch);
-    const res = await payer.fetch("http://localhost/v1/models/kling-v3.0-std/videos/generations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "waves", duration: 5 }),
-    });
-    expect(res.status).toBe(202);
-    const job = await res.json();
-    expect(job.status).toBe("queued");
-    const due = await ledger.getJob(job.id);
-    await jobs.pollJob(due!);
-    await jobs.pollJob((await ledger.getJob(job.id))!);
-    const status = await (await appFetch(new Request(`http://localhost/v1/jobs/${job.id}`))).json();
-    expect(status.status).toBe("completed");
-    expect(status.video_url).toContain(".mp4");
-  });
-
-  it("refunds a job that fails upstream", async () => {
-    const payer = createPayer(harness, appFetch);
-    mock.mockControls.videoOutcome = "failed";
-    const res = await payer.fetch("http://localhost/v1/models/wan-3.0/videos/generations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "waves", duration: 5 }),
-    });
-    expect(res.status).toBe(202);
-    const job = await res.json();
-    await jobs.pollJob((await ledger.getJob(job.id))!);
-    await jobs.pollJob((await ledger.getJob(job.id))!);
-    const status = await (await appFetch(new Request(`http://localhost/v1/jobs/${job.id}`))).json();
-    expect(status.status).toBe("failed");
-    expect(status.refund.status).toBe("pending");
-  });
-
-  it("rejects durations the upstream does not support, before payment", async () => {
-    const res = await appFetch(post("/v1/models/veo-3.1-fast/videos/generations", { prompt: "x", duration: 5 }));
-    expect(res.status).toBe(400);
+describe("removed model endpoints", () => {
+  it("never asks for payment for fal.ai or retired model endpoints", async () => {
+    const removed = {
+      image: ["gpt-image-1", "flux-2-pro", "recraft-v4.1-flash", "qwen-image-3", "seedream-5.0", "grok-imagine-image", "recraft-v3"],
+      video: ["veo-3.1-fast", "kling-v3.0-std", "wan-3.0", "hailuo-3", "sora-2-pro"],
+    };
+    for (const [kind, models] of Object.entries(removed)) {
+      for (const model of models) {
+        const path = kind === "image" ? "images/generations" : "videos/generations";
+        const res = await appFetch(post(`/v1/models/${model}/${path}`, { prompt: "x" }));
+        expect(res.status).toBe(404);
+        expect(res.headers.get("payment-required")).toBeNull();
+        const quote = await appFetch(post("/v1/quote", { model, prompt: "x" }));
+        expect(quote.status).toBe(404);
+      }
+    }
   });
 });
 

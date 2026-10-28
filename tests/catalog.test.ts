@@ -15,11 +15,8 @@ describe("catalog", () => {
     expect(registry.getModel("gpt-image-1.5")).toMatchObject({ provider: "openai", upstreamModelId: "gpt-image-1.5", displayName: "GPT Image 1.5" });
   });
   it("names every model after the upstream that actually serves it", () => {
-    const veo = INITIAL_MODELS.find((m) => m.slug === "veo-3.1-fast")!;
-    expect(veo.upstreamModelId).toBe("fal-ai/veo3.1/fast");
-    const kling = INITIAL_MODELS.find((m) => m.slug === "kling-v3.0-std")!;
-    expect(kling.upstreamModelId).toContain("/v3/");
-    expect(INITIAL_MODELS.find((m) => m.slug === "grok-imagine-image")!.upstreamModelId).toContain("grok-imagine-image/v2.0");
+    expect(INITIAL_MODELS.some(m => m.provider === "fal")).toBe(false);
+    expect(INITIAL_MODELS.some(m => m.modality === "video")).toBe(false);
     expect(INITIAL_MODELS.every((m) => !m.upstreamModelId.includes("openrouter/free"))).toBe(true);
   });
 
@@ -65,8 +62,8 @@ describe("pricing", () => {
   });
 
   it("supports per-model env cost overrides", () => {
-    const m = structuredClone(INITIAL_MODELS.find((x) => x.slug === "flux-2-pro")!);
-    expect(applyEnvCostOverride(m, { COST_FLUX_2_PRO: "0.09" } as any)).toBe(true);
+    const m = structuredClone(INITIAL_MODELS.find((x) => x.slug === "gpt-image-1.5")!);
+    expect(applyEnvCostOverride(m, { COST_GPT_IMAGE_1_5: "0.09" } as any)).toBe(true);
     expect(m.cost).toEqual({ kind: "per_image", usd: 0.09 });
     expect(m.costSource).toBe("env-override");
   });
@@ -87,32 +84,14 @@ describe("validation", () => {
   });
 
   it("enforces per-model image, voice and video specs", () => {
-    expect(validateBody({ prompt: "x", n: 2 }, model("flux-2-pro")).valid).toBe(false);
-    expect(validateBody({ prompt: "x", n: 2 }, model("qwen-image-3")).valid).toBe(true);
+    expect(validateBody({ prompt: "x", n: 5 }, model("gpt-image-1.5")).valid).toBe(false);
+    expect(validateBody({ prompt: "x", n: 2 }, model("gpt-image-1.5")).valid).toBe(true);
     expect(validateBody({ input: "x", response_format: "mp3" }, model("gpt-audio")).valid).toBe(false);
     expect(validateBody({ input: "x", voice: "robot" }, model("tts-1")).valid).toBe(false);
-    expect(validateBody({ prompt: "x", duration: 8 }, model("veo-3.1-fast")).valid).toBe(true);
-    expect(validateBody({ prompt: "x", duration: 7 }, model("veo-3.1-fast")).valid).toBe(false);
   });
 });
 
 describe("provider request mapping", () => {
-  it("maps durations to each upstream's wire format", () => {
-    const veo = INITIAL_MODELS.find((m) => m.slug === "veo-3.1-fast")!;
-    const kling = INITIAL_MODELS.find((m) => m.slug === "kling-v3.0-std")!;
-    const wan = INITIAL_MODELS.find((m) => m.slug === "wan-3.0")!;
-    expect(buildFalVideoInput(veo, { prompt: "x", duration: 6 }).duration).toBe("6s");
-    expect(buildFalVideoInput(kling, { prompt: "x", duration: 10 }).duration).toBe("10");
-    expect(buildFalVideoInput(wan, { prompt: "x", duration: 5 })).toMatchObject({ duration: 5, resolution: "720p" });
-  });
-
-  it("maps image sizes to image_size or aspect_ratio", () => {
-    const grok = INITIAL_MODELS.find((m) => m.slug === "grok-imagine-image")!;
-    const flux = INITIAL_MODELS.find((m) => m.slug === "flux-2-pro")!;
-    expect(buildFalImageInput(grok, { prompt: "x", size: "1792x1024", n: 2 })).toMatchObject({ aspect_ratio: "16:9", num_images: 2 });
-    expect(buildFalImageInput(flux, { prompt: "x", size: "1024x1792" })).toEqual({ prompt: "x", image_size: { width: 1024, height: 1792 } });
-  });
-
   it("wraps streamed PCM16 audio in a valid WAV header", () => {
     const wav = pcm16ToWav(Buffer.alloc(4800));
     expect(wav.subarray(0, 4).toString()).toBe("RIFF");
@@ -186,7 +165,7 @@ describe("catalog sync", () => {
         expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer test-openai-key");
         // Models are unavailable while the authenticated check is still in flight.
         expect(registry.getEnabledModels()).toHaveLength(0);
-        return Response.json({ data: [{ id: "gpt-image-1.5" }] });
+        return Response.json({ data: [{ id: "gpt-image-1.5", shutdown_date: "2999-01-01" }, { id: "tts-1", shutdown_date: "2020-01-01" }] });
       }
       return Response.json({ data: [], prices: [] });
     }) as typeof fetch;
@@ -231,7 +210,7 @@ describe("catalog sync", () => {
     const { config } = await import("../src/config.js");
     const prev = config.skipUpstreamVerification;
     config.skipUpstreamVerification = false;
-    const registry = new ModelRegistry(INITIAL_MODELS.filter((m) => ["gpt", "gpt-4o", "flux-2-pro"].includes(m.slug)));
+    const registry = new ModelRegistry(INITIAL_MODELS.filter((m) => ["gpt", "gpt-4o"].includes(m.slug)));
     const fakeFetch = (async (url: string) => {
       if (url.startsWith("https://openrouter.ai")) {
         return new Response(JSON.stringify({ data: [{ id: "openai/gpt-4o-mini", pricing: { prompt: "0.0000002", completion: "0.0000008" } }] }));
@@ -241,7 +220,7 @@ describe("catalog sync", () => {
     const report = await syncCatalog(registry, fakeFetch);
     config.skipUpstreamVerification = prev;
     expect(report.unverified).toEqual({ "gpt-4o": "openai/gpt-4o" });
-    expect(registry.getEnabledModels().map((m) => m.slug).sort()).toEqual(["flux-2-pro", "gpt"]);
+    expect(registry.getEnabledModels().map((m) => m.slug).sort()).toEqual(["gpt"]);
     expect(registry.getModel("gpt")!.cost).toEqual({ kind: "tokens", inputPerMillionUsd: 0.2, outputPerMillionUsd: 0.8 });
   });
 });
@@ -273,7 +252,7 @@ describe("public surfaces", () => {
 
   it("lists models with from-prices, cost basis and flow", async () => {
     const body = await (await get("/v1/models?modality=video")).json();
-    expect(body.data.length).toBe(5);
+    expect(body.data.length).toBe(0);
     for (const m of body.data) {
       expect(m.from_price).toMatch(/^\$\d/);
       expect(m.payment_flow).toBe("upfront");

@@ -19,7 +19,6 @@ result.verification?.ok; // Ed25519 receipt checked against the request and resp
 result.receipt?.txid; // Algorand settlement transaction
 ```
 
-Video returns a job: `const job = await client.waitForJob((await client.video("kling-v3.0-std", { prompt })).data.id)`.
 
 ## Spending mandates for agents
 
@@ -53,7 +52,7 @@ await revokeMandate("https://moltworld.xyz", owner, mandateId);
 ## Local MCP server
 
 `moltworld-mcp` exposes paid tools (`moltworld_chat`, `moltworld_image`, `moltworld_speech`,
-`moltworld_video`, `moltworld_quote`, `moltworld_spend`) to any MCP client. Configure it with
+`moltworld_quote`, `moltworld_spend`) to any MCP client. Configure it with
 `MOLTWORLD_MANDATE` (base64 JSON of the credential) or `MOLTWORLD_MNEMONIC`, plus
 `MOLTWORLD_MAX_PER_REQUEST_USD` and `MOLTWORLD_BUDGET_USD`. With a mandate it reads the agent key
 from `~/.moltworld/agent.key` (override with `MOLTWORLD_AGENT_KEY_FILE`); create it once with

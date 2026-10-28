@@ -107,57 +107,6 @@ function chat(
   };
 }
 
-const SQUARE_AND_WIDE = ["1024x1024", "1024x1792", "1792x1024"];
-
-function falImage(
-  slug: string,
-  displayName: string,
-  upstreamModelId: string,
-  usd: number,
-  vendor: string,
-  image: ImageSpec,
-  maxImages = 1
-): ModelDefinition {
-  return {
-    slug,
-    displayName,
-    modality: "image",
-    provider: "fal",
-    upstreamModelId,
-    cost: { kind: "per_image", usd },
-    costSource: "static",
-    limits: { maxPromptChars: 3000, maxImages },
-    enabled: true,
-    description: `${displayName} (fal.ai endpoint ${upstreamModelId}) text-to-image.`,
-    tags: ["image", vendor],
-    image,
-  };
-}
-
-function falVideo(
-  slug: string,
-  displayName: string,
-  upstreamModelId: string,
-  usdPerSecond: number,
-  vendor: string,
-  video: VideoSpec
-): ModelDefinition {
-  return {
-    slug,
-    displayName,
-    modality: "video",
-    provider: "fal",
-    upstreamModelId,
-    cost: { kind: "per_second", usd: usdPerSecond },
-    costSource: "static",
-    limits: { maxPromptChars: 2500 },
-    enabled: true,
-    description: `${displayName} (fal.ai endpoint ${upstreamModelId}) text-to-video, delivered as an async job.`,
-    tags: ["video", vendor],
-    video,
-  };
-}
-
 export const INITIAL_MODELS: ModelDefinition[] = [
   // Chat: every upstream id below was present in OpenRouter's public model list.
   chat("gpt", "GPT-4o Mini", "openai/gpt-4o-mini", 0.15, 0.6, "openai"),
@@ -185,31 +134,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
   chat("claude-sonnet-5", "Claude Sonnet 5", "anthropic/claude-sonnet-5", 2, 10, "anthropic", PRO_LIMITS),
   chat("claude-sonnet-5.5", "Claude Sonnet 5.5", "anthropic/claude-sonnet-5.5", 2, 10, "anthropic", PRO_LIMITS),
 
-  // Image: active fal.ai endpoints (checked against api.fal.ai/v1/models).
-  falImage("recraft-v4.1-flash", "Recraft V4.1 Flash", "recraft/v4.1/flash/text-to-image", 0.04, "recraft", {
-    sizeParam: "image_size",
-    sizes: SQUARE_AND_WIDE,
-  }),
-  falImage("flux-2-pro", "FLUX.2 Pro", "fal-ai/flux-2-pro", 0.06, "black-forest-labs", {
-    sizeParam: "image_size",
-    sizes: SQUARE_AND_WIDE,
-  }),
-  falImage("qwen-image-3", "Qwen Image 3", "alibaba/qwen-image-3/text-to-image", 0.05, "alibaba", {
-    sizeParam: "image_size",
-    sizes: SQUARE_AND_WIDE,
-  }, 4),
-  falImage("seedream-5.0", "Seedream 5.0 Lite", "bytedance/seedream/v5/lite/text-to-image", 0.04, "bytedance", {
-    sizeParam: "image_size",
-    sizes: SQUARE_AND_WIDE,
-  }, 4),
-  falImage("grok-imagine-image", "Grok Imagine Image 2.0", "xai/grok-imagine-image/v2.0/text-to-image", 0.07, "xai", {
-    sizeParam: "aspect_ratio",
-    sizes: SQUARE_AND_WIDE,
-  }, 4),
-  falImage("recraft-v3", "Recraft V3", "fal-ai/recraft/v3/text-to-image", 0.04, "recraft", {
-    sizeParam: "image_size",
-    sizes: SQUARE_AND_WIDE,
-  }),
+  // Image: supported OpenAI Images API model.
   {
     // gpt-image-1 shut down on 2026-10-23; never sell the retired endpoint.
     slug: "gpt-image-1.5",
@@ -300,44 +225,7 @@ export const INITIAL_MODELS: ModelDefinition[] = [
     audioFormats: ["mp3"],
   },
 
-  // Video: fal.ai queue endpoints plus OpenAI's Videos API for Sora.
-  falVideo("veo-3.1-fast", "Google Veo 3.1 Fast", "fal-ai/veo3.1/fast", 0.15, "google", {
-    durations: [4, 6, 8],
-    durationFormat: "suffix_s",
-    aspectRatios: ["16:9", "9:16"],
-    extraInput: { resolution: "720p", generate_audio: true },
-  }),
-  falVideo("kling-v3.0-std", "Kling Video v3 Standard", "fal-ai/kling-video/v3/standard/text-to-video", 0.14, "kling", {
-    durations: [5, 10],
-    durationFormat: "string",
-    aspectRatios: ["16:9", "9:16", "1:1"],
-  }),
-  falVideo("wan-3.0", "Alibaba Wan 3.0", "alibaba/wan-3.0/text-to-video", 0.1, "alibaba", {
-    durations: [5, 10],
-    durationFormat: "int",
-    aspectRatios: ["16:9", "9:16", "1:1"],
-    extraInput: { resolution: "720p" },
-  }),
-  falVideo("hailuo-3", "MiniMax Hailuo H3", "minimax/h3/text-to-video", 0.1, "minimax", {
-    durations: [5],
-    durationFormat: "int",
-    aspectRatios: ["16:9", "9:16", "1:1"],
-    extraInput: { resolution: "768P" },
-  }),
-  {
-    slug: "sora-2-pro",
-    displayName: "OpenAI Sora 2 Pro",
-    modality: "video",
-    provider: "openai",
-    upstreamModelId: "sora-2-pro",
-    cost: { kind: "per_second", usd: 0.3 },
-    costSource: "static",
-    limits: { maxPromptChars: 2500 },
-    enabled: true,
-    description: "OpenAI sora-2-pro (720p) via the OpenAI Videos API, delivered as an async job.",
-    tags: ["video", "openai"],
-    video: { durations: [4, 8, 12], durationFormat: "string", aspectRatios: ["16:9", "9:16"] },
-  },
+
 ];
 
 export type AvailabilityCheck = (model: ModelDefinition) => boolean;

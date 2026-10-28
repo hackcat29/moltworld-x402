@@ -28,9 +28,9 @@ export async function runTestClient(options: {
   const modality = options.modality || (process.env.TEST_MODALITY as any) || "chat";
   
   let defaultModel = "gpt";
-  if (modality === "image") defaultModel = "flux-2-pro";
+  if (modality === "image") defaultModel = "gpt-image-1.5";
   if (modality === "voice") defaultModel = "tts-1";
-  if (modality === "video") defaultModel = "kling-v3.0-std";
+  if (modality === "video") throw new Error("Video generation is no longer available.");
   const modelSlug = options.modelSlug || process.env.TEST_MODEL || defaultModel;
 
   let endpoint = `${baseUrl}/v1/models/${modelSlug}/chat/completions`;

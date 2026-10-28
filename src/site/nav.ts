@@ -42,7 +42,7 @@ export const WORKFLOWS = [
   {
     slug: "content-pipelines",
     short: "Content pipelines",
-    title: "Script, voice and video through one API",
+    title: "Script, image and voice through one API",
     summary: "Generate every asset per post through one API, with failed jobs refunded on-chain.",
   },
   {

@@ -114,7 +114,7 @@ export function catalogWidget(models: CatalogEntry[]): string {
     `<button class="tab${key === "all" ? "" : ` dot-${key}`}" type="button" data-filter="${key}" aria-pressed="${pressed}">${key === "all" ? "" : "<i></i>"}${label} (${n})</button>`;
   return `
       <div class="filters" role="group" aria-label="Filter by modality">
-        ${tab("all", "All", models.length, true)}${MODALITIES.map((k) => tab(k, MODALITY_LABEL[k], counts[k])).join("")}
+        ${tab("all", "All", models.length, true)}${MODALITIES.filter(k => counts[k] > 0).map((k) => tab(k, MODALITY_LABEL[k], counts[k])).join("")}
         <label class="sr-only" for="search">Search models</label>
         <input id="search" type="search" placeholder="Search models, labs or upstream ids">
       </div>

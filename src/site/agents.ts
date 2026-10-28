@@ -245,9 +245,9 @@ tools = await client.get_tools()`,
       slug: "media-agents",
       short: "Media and content agents",
       icon: "video",
-      title: "Script, voice and video <em>per asset.</em>",
+      title: "Script, image and voice <em>per asset.</em>",
       examples: ["Content pipelines", "Creator tools like Syllaby"],
-      summary: "Content agents generate images, voice and video per asset; tools with their own engines can sell them per call.",
+      summary: "Content agents generate images and voice per asset; tools with their own engines can sell them per call.",
       connect: [
         ["Your content agent", "Local MCP or the SDK", "mandate"],
         ["A tool with its own engine", "Marketplace listing", "earns"],
@@ -257,22 +257,19 @@ tools = await client.get_tools()`,
           "mcp",
           "MCP tool calls",
           `moltworld_chat({ model: "claude-sonnet-5", messages: [{ role: "user", content: "Script a 30s teaser" }] })
-moltworld_speech({ model: "eleven-multilingual", input: script })
-moltworld_video({ model: "veo-3.1-fast", prompt: shot, duration: 8, wait: true })`,
+moltworld_speech({ model: "eleven-multilingual", input: script })`,
           "ts",
         ],
         [
           "ts",
           "TypeScript",
           `const script = await client.chat("claude-sonnet-5", { messages: [{ role: "user", content: brief }] });
-const voice = await client.speech("eleven-multilingual", { input: script.data.choices[0].message.content });
-const clip = await client.video("veo-3.1-fast", { prompt: shot, duration: 8 });
-const job = await client.waitForJob(clip.data.id);`,
+const voice = await client.speech("eleven-multilingual", { input: script.data.choices[0].message.content });`,
           "ts",
         ],
       ],
       facts: [
-        ["image", "Image, voice and video models behind one API."],
+        ["image", "Image and voice models behind one API."],
         ["refund", "Failed or unfinished generations are refunded."],
         ["receipt", "A receipt per asset gives an exact cost record."],
       ],

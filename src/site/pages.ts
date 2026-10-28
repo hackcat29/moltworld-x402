@@ -35,7 +35,7 @@ const share = () => 100 - config.marketplaceFeePercent;
 const margin = () => Math.round(config.priceMargin * 100);
 /** Whether this deployment caps mandates on-chain; copy only claims it when it is true. */
 const onChainCap = () => config.mandateCounterAppId !== null;
-const MODALITIES = ["chat", "image", "voice", "video"] as const;
+const MODALITIES = ["chat", "image", "voice"] as const;
 
 /** Exact price of a request body for a model, or null when the model is not sold here. */
 function quoteFor(slug: string, request: ValidatedRequest): string | null {
@@ -134,7 +134,7 @@ function snippets(model = "gpt-4o") {
 }
 
 // The agent now has moltworld_chat, moltworld_image, moltworld_speech,
-// moltworld_video and moltworld_quote, and pays within the mandate.`,
+// moltworld_quote, and pays within the mandate.`,
     claude: `claude mcp add -e MOLTWORLD_MANDATE=<credential> -e MOLTWORLD_BUDGET_USD=5 \\
   moltworld -- npx -y -p moltworld-sdk moltworld-mcp
 
@@ -218,20 +218,18 @@ function receiptDemo(): string {
 }
 
 function chatDemo(models: CatalogEntry[]): string {
-  const video = models.find((m) => m.slug === "veo-3.1-fast") ?? models.find((m) => m.modality === "video");
-  const slug = video?.slug ?? "veo-3.1-fast";
-  const durations = video?.durations ?? [6];
-  const dur = durations.includes(6) ? 6 : durations[0];
-  const price = quoteFor(slug, { prompt: "Product teaser", duration: dur } as ValidatedRequest) ?? video?.from ?? "a few cents";
+  const model = models.find(m => m.modality === "image");
+  const slug = model?.slug ?? "gpt-image-1.5";
+  const price = quoteFor(slug, { prompt: "Product hero photograph", n: 1 } as ValidatedRequest) ?? model?.from ?? "unavailable";
   return `<div class="chat" data-chat data-reveal>
-      <div class="chat-head">Example session</div>
-      <div class="msg user" data-step data-wait="300">Make a ${dur}-second teaser for tomorrow's launch.</div>
-      <div class="tool" data-step><span class="fn">moltworld_quote</span>({ model: "${esc(slug)}", duration: ${dur} })<br>&rarr; ${esc(price)} USDC</div>
-      <div class="tool" data-step data-wait="900"><span class="fn">moltworld_video</span>({ model: "${esc(slug)}", prompt: "&hellip;" })<br>&rarr; <span class="ok">paid</span> &middot; job queued</div>
-      <div class="tool" data-step data-wait="1100">receipt &middot; <span class="ok">signature valid</span> &middot; ${esc(network())}</div>
-      <div class="msg bot" data-step>Done for ${esc(price)}. Clip and receipt attached.</div>
-      <div class="typing hidden" aria-hidden="true"><i></i><i></i><i></i></div>
-    </div>`;
+    <div class="chat-head">Example session</div>
+    <div class="msg user" data-step data-wait="300">Make a product hero photo for tomorrow's launch.</div>
+    <div class="tool" data-step><span class="fn">moltworld_quote</span>({ model: "${esc(slug)}", body: { prompt: "Product hero photograph" } })<br>&rarr; ${esc(price)} USDC</div>
+    <div class="tool" data-step data-wait="900"><span class="fn">moltworld_image</span>({ model: "${esc(slug)}", prompt: "&hellip;" })<br>&rarr; <span class="ok">paid</span> &middot; image generated</div>
+    <div class="tool" data-step data-wait="1100">receipt &middot; <span class="ok">signature valid</span> &middot; ${esc(network())}</div>
+    <div class="msg bot" data-step>Done for ${esc(price)}. Image and receipt attached.</div>
+    <div class="typing hidden" aria-hidden="true"><i></i><i></i><i></i></div>
+  </div>`;
 }
 
 const WORLD_FALLBACK = `<svg viewBox="0 0 400 400" aria-hidden="true" fill="none" stroke="currentColor" style="color:var(--line-2)"><circle cx="200" cy="200" r="150"/><ellipse cx="200" cy="200" rx="60" ry="150"/><ellipse cx="200" cy="200" rx="115" ry="150"/><path d="M50 200h300M70 125h260M70 275h260"/><ellipse cx="200" cy="200" rx="190" ry="54" transform="rotate(-18 200 200)" stroke-dasharray="3 6"/><circle cx="352" cy="148" r="6" fill="var(--signal)" stroke="none"/></svg>`;
@@ -242,10 +240,10 @@ function flowBand(): string {
   const right = lanes.map((y, i) => `<path class="out o${i}" d="M500 200 C 640 200, 700 ${y}, 1000 ${y}"/>`).join("");
   return `<div class="flow" data-reveal>
       <svg class="flow-fallback" viewBox="0 0 1000 400" preserveAspectRatio="none" aria-hidden="true">${left}${right}</svg>
-      <canvas id="flow" role="img" aria-label="Requests pass through the x402 gate and fan out to chat, image, voice and video models"></canvas>
+      <canvas id="flow" role="img" aria-label="Requests pass through the x402 gate and fan out to chat, image and voice models"></canvas>
       <span class="flow-gate" aria-hidden="true"></span>
       <span class="flow-label c" aria-hidden="true">x402</span>
-      <div class="flow-lanes" aria-hidden="true">${(["video", "voice", "image", "chat"] as const)
+      <div class="flow-lanes" aria-hidden="true">${(["voice", "image", "chat"] as const)
         .map((k, i) => `<span style="top:${(18.5 + i * 21).toFixed(1)}%">${MODALITY_LABEL[k]}<i style="background:var(--${k})"></i></span>`)
         .join("")}</div>
     </div>`;
@@ -393,7 +391,7 @@ function home(c: Context) {
   return renderPage(c, {
     path: "/",
     title: "Moltworld | Every AI model, paid per request",
-    description: `The pay-per-request gateway for AI. Every chat, image, voice and video model, paid per call in USDC on Algorand through x402. No accounts, no API keys, signed receipts.`,
+    description: `The pay-per-request gateway for AI. Every chat, image and voice model, paid per call in USDC on Algorand through x402. No accounts, no API keys, signed receipts.`,
     body,
     data: catalogScript(models),
   });
@@ -403,7 +401,7 @@ function faq(): string {
   const qa: Array<[string, string]> = [
     ["Do I need an account or ALGO?", "No. You need a wallet with USDC on Algorand. The x402 facilitator pays the network fee, and there is nothing to sign up for."],
     ["How is a request priced?", `From the request itself: input tokens plus <code>max_tokens</code> for chat, images, characters or seconds for media, at the upstream's live rate plus a ${margin()}% margin (minimum $${config.priceMinFloor}). <code>POST /v1/quote</code> returns the same price for free.`],
-    ["What if a model fails?", "Chat settles only after the answer exists. Image, voice and video settle first and are refunded on-chain automatically if the model fails, or if a video job doesn't finish."],
+    ["What if a model fails?", "Chat settles only after the answer exists. Image and voice settle first and are refunded on-chain automatically if the model fails, when generation fails."],
     ["Am I charged for unused tokens?", "Chat is authorized for its full <code>max_tokens</code> budget. The part the model didn't use is credited back and paid out in USDC."],
     ["Which clients can pay?", "Any x402 client that supports Algorand's exact scheme, the TypeScript and Python SDKs, or an agent through the remote or local MCP server."],
     [
@@ -494,13 +492,12 @@ function gateway(c: Context) {
           <tr><td data-label="Type">Chat</td><td data-label="Endpoint"><code>/v1/models/{model}/chat/completions</code></td><td data-label="Priced by">Input tokens + max_tokens</td><td data-label="Charged">After the answer</td></tr>
           <tr><td data-label="Type">Image</td><td data-label="Endpoint"><code>/v1/models/{model}/images/generations</code></td><td data-label="Priced by">Images</td><td data-label="Charged">First, refunded on failure</td></tr>
           <tr><td data-label="Type">Voice</td><td data-label="Endpoint"><code>/v1/models/{model}/audio/speech</code></td><td data-label="Priced by">Characters</td><td data-label="Charged">First, refunded on failure</td></tr>
-          <tr><td data-label="Type">Video</td><td data-label="Endpoint"><code>/v1/models/{model}/videos/generations</code> &rarr; <code>/v1/jobs/{id}</code></td><td data-label="Priced by">Seconds</td><td data-label="Charged">First, refunded if the job fails</td></tr>
         </tbody></table></div>
     `)}
     ${sec(`<div class="dev-grid"><h2 data-split>Start <em>in a few lines.</em></h2><div data-reveal>${codeTabs("gw", [["mcp", "MCP", s.mcp, "json"], ["claude", "Claude Code", s.claude, "sh"], ["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]])}</div></div>`)}
     ${sec(`${secHead("How a call <em>gets paid.</em>")}${flowBand()}${stepsList(PAYMENT_STEPS)}`)}
     ${ctaFinal("Try a model <em>now.</em>")}`;
-  return renderPage(c, { path: "/products/gateway", title: "Gateway", description: "One API for chat, image, voice and video models, paid per request in USDC through x402.", body });
+  return renderPage(c, { path: "/products/gateway", title: "Gateway", description: "One API for chat, image and voice models, paid per request in USDC through x402.", body });
 }
 
 function modelsPage(c: Context) {
@@ -666,7 +663,7 @@ function receipts(c: Context) {
 
 function pricing(c: Context) {
   const models = catalog();
-  const examples = ["gpt", "claude-sonnet-5", "gemini", "flux-2-pro", "eleven-multilingual", "veo-3.1-fast"]
+  const examples = ["gpt", "claude-sonnet-5", "gemini", "gpt-image-1.5", "eleven-multilingual"]
     .map((slug) => models.find((m) => m.slug === slug))
     .filter((m): m is CatalogEntry => !!m);
   const reference: Record<string, string> = { chat: "Short prompt, 256 max_tokens", image: "One image", voice: "One sentence", video: "Shortest clip" };
@@ -780,7 +777,6 @@ function solutionsAgents(c: Context) {
     ["moltworld_chat", "Paid chat; unused tokens paid back"],
     ["moltworld_image", "Paid image; refunded on failure"],
     ["moltworld_speech", "Paid text-to-speech"],
-    ["moltworld_video", "Paid video; can wait for the result"],
     ["moltworld_spend", "Wallet and spend this session"],
   ];
   const body = `
@@ -797,7 +793,7 @@ function solutionsAgents(c: Context) {
         <tbody>
           <tr><td data-label="">Address</td><td data-label="Remote"><code>${origin}/mcp</code></td><td data-label="Local"><code>moltworld-mcp</code></td></tr>
           <tr><td data-label="">Holds</td><td data-label="Remote">Nothing</td><td data-label="Local">A mandate credential and its own agent key, never the owner's key</td></tr>
-          <tr><td data-label="">Can</td><td data-label="Remote">List, quote, relay requests you signed</td><td data-label="Local">Pay for chat, image, voice and video</td></tr>
+          <tr><td data-label="">Can</td><td data-label="Remote">List, quote, relay requests you signed</td><td data-label="Local">Pay for chat, image and voice</td></tr>
           <tr><td data-label="">For</td><td data-label="Remote">Discovery, or a person approving each payment</td><td data-label="Local">Agents that run on their own</td></tr>
         </tbody></table></div>
     `)}
@@ -909,7 +905,7 @@ function solutionsDevelopers(c: Context) {
     `)}
     ${sec(`<div class="dev-grid"><h2 data-split>Start <em>in a few lines.</em></h2><div data-reveal>${codeTabs("devs", [["ts", "TypeScript", s.ts], ["py", "Python", s.py], ["curl", "curl", s.curl]])}</div></div>`)}
     ${ctaFinal("Build with <em>Moltworld.</em>")}`;
-  return renderPage(c, { path: "/solutions/developers", title: "App developers", description: "Add chat, image, voice and video models to your app with per-request USDC payments and no API keys.", body });
+  return renderPage(c, { path: "/solutions/developers", title: "App developers", description: "Add chat, image and voice models to your app with per-request USDC payments and no API keys.", body });
 }
 
 function solutionsCreators(c: Context) {
@@ -966,7 +962,7 @@ function useCaseDetails(): Record<string, UseCaseDetail> {
   return {
     "agent-allowance": {
       problem:
-        "Personal agents like OpenClaw and Hermes Agent run all day on one model and one subscription. When a task needs a video, a voice reply or a stronger model, you either hand the agent an API key with no limit, or the task fails.",
+        "Personal agents like OpenClaw and Hermes Agent run all day on one model and one subscription. When a task needs an image, a voice reply or a stronger model, you either hand the agent an API key with no limit, or the task fails.",
       how: [
         "Create a mandate: $0.25 per call, $5 a day, chosen models, 30 days.",
         "Give the agent the credential. It contains no private key.",
@@ -997,15 +993,14 @@ if (quote.microUsdc < 200_000) {
     },
     "content-pipelines": {
       problem:
-        "Content workflows need several models: an image model for the thumbnail, a voice model for narration, a video model for the clip. Each usually means a separate account and subscription.",
+        "Content workflows need several models: an image model for the thumbnail, a voice model for narration, an image model for the hero asset. Each usually means a separate account and subscription.",
       how: [
-        "Script, voice-over and clip through one API.",
-        "Video runs as a job; poll it or let the SDK wait.",
+        "Script, image and voice-over through one API.",
+        "Use GPT Image 1.5 for the hero asset.",
         "Failed or unfinished generations are refunded on-chain.",
         "Receipts give a cost record per asset.",
       ],
-      code: `const clip = await client.video("kling-v3.0-std", { prompt, duration: 5 });
-const job = await client.waitForJob(clip.data.id);
+      code: `const image = await client.image("gpt-image-1.5", { prompt });
 const voice = await client.speech("tts-1-hd", { input: script });`,
       products: [["Gateway", "/products/gateway"], ["Receipts", "/products/receipts"]],
     },

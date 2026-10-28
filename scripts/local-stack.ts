@@ -11,6 +11,8 @@ import { serve } from "@hono/node-server";
 import { createPayer, startHarness } from "../tests/helpers/harness.js";
 
 process.env.NODE_ENV ??= "development";
+// The simulated facilitator only serves testnet; ignore a developer's mainnet .env.
+process.env.ALGORAND_NETWORK = "testnet";
 process.env.MOCK_PROVIDERS = "true";
 process.env.SKIP_UPSTREAM_VERIFICATION = "true";
 process.env.BACKGROUND_WORKERS = "true";
@@ -54,7 +56,7 @@ async function seed() {
     const payer = createPayer(harness, appFetch);
     await payer.fetch(`http://127.0.0.1/v1/models/gpt-4o/chat/completions`, json({ messages: [{ role: "user", content: `Hello #${i}` }], max_tokens: 400 }));
     await payer.fetch(`http://127.0.0.1/v1/models/claude-sonnet-5/chat/completions`, json({ messages: [{ role: "user", content: "Summarize x402" }], max_tokens: 300 }));
-    if (i === 0) await payer.fetch(`http://127.0.0.1/v1/models/flux-2-pro/images/generations`, json({ prompt: "A lighthouse at dawn" }));
+    if (i === 0) await payer.fetch(`http://127.0.0.1/v1/models/gpt-image-1.5/images/generations`, json({ prompt: "A lighthouse at dawn" }));
   }
 
   // One approved marketplace listing, served by a local stand-in for the creator API.

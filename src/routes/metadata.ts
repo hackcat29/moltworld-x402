@@ -5,7 +5,7 @@ import { quoteRequest, referenceRequest } from "../pricing/index.js";
 
 const SITE_TITLE = "Moltworld | Multimodal AI Gateway with x402 on Algorand";
 const SITE_DESCRIPTION =
-  "One API for AI models and autonomous agents. Chat, image, voice, and video requests are paid per call in USDC on Algorand.";
+  "One API for AI models and autonomous agents. Chat, image and voice requests are paid per call in USDC on Algorand.";
 const SERVICE_TAGS = ["moltworld", "ai-inference", "algorand", "x402", "x402-global-challenge"];
 
 function siteUrl(): string {
@@ -66,7 +66,7 @@ export function handleLlmsTxt(c: Context): Response {
     "- Prices are per request and depend on the body (input size and max_tokens for chat, images, characters, seconds). POST /v1/quote returns the exact amount for a body without paying.",
     "- Send JSON to a model's POST endpoint. Invalid bodies get HTTP 400 before any payment. A valid unpaid request returns HTTP 402 with a Payment-Required header for that exact body.",
     "- Pay with an x402 client that supports Algorand USDC and retry with Payment-Signature. Each paid response carries a Moltworld-Receipt header: an Ed25519-signed receipt binding the txid to sha256 of your request and of the response body.",
-    "- Chat settles after the answer is produced; unused max_tokens budget is rebated in USDC. Image, voice and video settle first and are refunded on-chain if the upstream fails. Video returns a job id to poll at /v1/jobs/{id}.",
+    "- Chat settles after the answer is produced; unused max_tokens budget is rebated in USDC. Image and voice settle first and are refunded on-chain if the upstream fails. Historical video job records remain available at /v1/jobs/{id}.",
     "- Retrying with the same Payment-Signature after a dropped connection returns the original response; it is never charged twice.",
     "- Agents can pay through an on-chain spending mandate (delegated LogicSig) with per-call, daily and model limits: see /v1/mandates/draft. Every mandate is bound to the agent's own key (`moltworld-mcp keygen`): each payment carries the agent's ed25519 signature over its txid as LogicSig arg 0, so the credential alone cannot pay.",
     ...(config.mandateCounterAppId

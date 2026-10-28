@@ -40,9 +40,8 @@ Give exactly one of `signer`, `mnemonic`, `privateKeyBase64` or `mandate`.
 
 ```ts
 await client.chat("gpt-4o", { messages: [{ role: "user", content: "Hi" }], max_tokens: 200 });
-await client.image("flux-2-pro", { prompt: "a lighthouse at dusk", size: "1024x1024" });
+await client.image("gpt-image-1.5", { prompt: "a lighthouse at dusk", size: "1024x1024" });
 await client.speech("tts-1", { input: "Hello there", voice: "alloy" });
-await client.video("veo-3.1-fast", { prompt: "waves at sunset", duration: 6 });
 await client.market("weather-now", { lat: 52.37, lon: 4.9 });
 await client.call("/v1/models/gpt-4o/chat/completions", body); // any paid path
 ```
@@ -61,10 +60,9 @@ Each returns a `PaidResult`:
 ## Free calls
 
 ```ts
-await client.models("video");               // catalog
+await client.models("image");               // catalog
 await client.quote("gpt-4o", body);         // { microUsdc, formattedPrice, units }
 await client.job(jobId);                    // video job status
-await client.waitForJob(jobId);             // poll until completed or failed
 await client.receipt(requestId);            // receipt and settlement status
 client.spentUsd;                            // spend so far
 client.address;                             // paying address

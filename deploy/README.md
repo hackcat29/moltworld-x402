@@ -17,7 +17,7 @@ secrets in `/opt/moltworld/.env` (`POSTGRES_PASSWORD`, `RECEIPT_SIGNING_KEY`, `A
 configures the PostgreSQL database, builds, installs the systemd unit and configures Nginx. Then set in `.env`:
 
 - `ALGORAND_NETWORK=mainnet` and `AVM_ADDRESS` (revenue address; the gateway never needs its key)
-- provider keys: `OPENROUTER_API_KEY`, `FAL_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`
+- provider keys: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`
 - `PAYOUT_WALLET_MNEMONIC` for refunds, rebates and creator payouts
 
 and `systemctl restart moltworld`. On mainnet the gateway refuses to start without

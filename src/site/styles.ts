@@ -313,7 +313,7 @@ a.card:hover { border-color: var(--line-2); transform: translateY(-3px); }
 @media (max-width: 560px) { .steps { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---------------------------------------------------------------- models showcase */
-.mod-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 40px; }
+.mod-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 40px; }
 .mod { display: block; border: 1px solid var(--line); border-radius: 20px; padding: 22px; background: var(--bg-1); position: relative; overflow: hidden; color: var(--text); text-decoration: none; transition: border-color .25s, transform .4s var(--ease-out); }
 .mod:hover { border-color: var(--c); transform: translateY(-3px); }
 .mod .k { display: flex; align-items: center; gap: 8px; font: 500 12px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }

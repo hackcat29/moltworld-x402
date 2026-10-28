@@ -36,9 +36,8 @@ client = MoltworldClient(
 
 ```python
 client.chat("gpt-4o", [{"role": "user", "content": "Hi"}], max_tokens=200)
-client.image("flux-2-pro", "a lighthouse at dusk", size="1024x1024")
+client.image("gpt-image-1.5", "a lighthouse at dusk", size="1024x1024")
 client.speech("tts-1", "Hello there", voice="alloy")
-client.video("veo-3.1-fast", "waves at sunset", duration=6, wait=True)
 client.market("weather-now", {"lat": 52.37, "lon": 4.9})
 client.call("/v1/models/gpt-4o/chat/completions", body)
 ```

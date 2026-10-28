@@ -4,7 +4,6 @@ import { AIProvider } from "./types.js";
 import { OpenRouterProvider } from "./openrouter.js";
 import { MockProvider } from "./mock.js";
 import { DirectOpenAIProvider } from "./direct.js";
-import { FalProvider } from "./fal.js";
 import { ElevenLabsProvider } from "./elevenlabs.js";
 
 export * from "./types.js";
@@ -24,9 +23,6 @@ export class ProviderRegistry {
     }
     if (config.openaiApiKey) {
       this.registerProvider(new DirectOpenAIProvider(config.openaiApiKey, config.upstreamTimeoutMs));
-    }
-    if (config.falKey) {
-      this.registerProvider(new FalProvider(config.falKey, Math.max(config.upstreamTimeoutMs, 90000)));
     }
     if (config.elevenlabsApiKey) {
       this.registerProvider(new ElevenLabsProvider(config.elevenlabsApiKey, config.upstreamTimeoutMs));

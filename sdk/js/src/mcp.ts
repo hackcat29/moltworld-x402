@@ -130,24 +130,6 @@ export async function main() {
   );
 
   server.registerTool(
-    "moltworld_video",
-    {
-      description: "Paid video generation. Returns a job; set wait=true to block until the video URL is ready (failed jobs are refunded).",
-      inputSchema: z.object({ model: z.string(), prompt: z.string(), duration: z.number().int().optional(), wait: z.boolean().optional() }),
-    },
-    async ({ model, prompt, duration, wait }) => {
-      try {
-        const result = await client.video(model, { prompt, duration });
-        const summary = paidSummary(result, client);
-        if (!wait) return json(summary);
-        return json({ ...summary, job: await client.waitForJob((result.data as any).id) });
-      } catch (err) {
-        return failure(err);
-      }
-    }
-  );
-
-  server.registerTool(
     "moltworld_spend",
     { description: "Wallet address and USDC spent in this session.", inputSchema: z.object({}) },
     async () => json({ address: client.address, session_spent_usdc: client.spentUsd, budget_usdc: Number(process.env.MOLTWORLD_BUDGET_USD ?? 5) })

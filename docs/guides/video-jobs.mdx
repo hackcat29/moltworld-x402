@@ -1,45 +1,10 @@
 ---
-title: "Video jobs"
-description: "Start a video, wait for it and get the file."
+title: "Historical video jobs"
+description: "Inspect video jobs submitted before video generation was removed."
 ---
 
-Video takes from under a minute to several minutes, so the paid request returns a job instead of the video.
+Video generation is no longer available. The fal.ai models were removed, and OpenAI retired the Sora Videos API on 24 September 2026. Removed model endpoints return `404` before payment.
 
-<Steps>
-  <Step title="Start the job">
-    ```bash
-    POST /v1/models/veo-3.1-fast/videos/generations
-    { "prompt": "Waves at sunset, slow pan", "duration": 6, "aspect_ratio": "16:9" }
-    ```
+Existing job and receipt records remain available through `GET /v1/jobs/{id}` and `GET /v1/receipts/{request_id}`. These endpoints do not submit new generations.
 
-    The response is `202` with the job id and a `poll_url`. Payment settles here.
-  </Step>
-  <Step title="Poll">
-    `GET /v1/jobs/{id}` is free. `status` moves from `queued` to `processing`, then to `completed` or `failed`. Poll every few seconds.
-  </Step>
-  <Step title="Download">
-    When the job is `completed`, `video_url` points to the file. For providers whose links need a key, it points to `/v1/jobs/{id}/content` on Moltworld, which streams the file.
-  </Step>
-</Steps>
-
-## With the SDK
-
-<CodeGroup>
-```ts TypeScript
-const start = await client.video("veo-3.1-fast", { prompt: "Waves at sunset", duration: 6 });
-const job = await client.waitForJob(start.data.id);
-console.log(job.status, job.video_url);
-```
-```python Python
-res = client.video("veo-3.1-fast", "Waves at sunset", duration=6, wait=True)
-print(res.data["status"], res.data.get("video_url"))
-```
-</CodeGroup>
-
-## If the job fails
-
-A failed job is refunded in full, on-chain, to the paying wallet. The job shows the refund under `refund`, with its status and transaction id once sent.
-
-## Choosing a duration
-
-Each model accepts a fixed set of durations, listed under `durations` in [`GET /v1/models`](/api-reference/endpoints/list-models). Other values get `400` before payment.
+Use `GET /v1/models` for the current chat, image and voice catalog.
