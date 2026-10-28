@@ -448,6 +448,40 @@ describe("spending mandates", () => {
     expect(await res.text()).toContain("agent");
   });
 
+  it("refuses a mandate registered before agent binding, which could pay with the credential alone", async () => {
+    const owner = algosdk.generateAccount();
+    harness.chain.balances.set(owner.addr.toString(), 10_000_000);
+    const expiryRound = harness.chain.round + 100_000;
+    const program = mandates.assembleMandate({ payTo: config.payToAddress, assetId: Number(config.usdcAsaId), maxPerCallMicro: 1_000_000, expiryRound, salt: mandates.newMandateSalt() });
+    // A row as the gateway stored it before new mandates had to name an agent.
+    await ledger.upsertMandate({
+      id: mandates.mandateId(program),
+      owner: owner.addr.toString(),
+      label: "legacy",
+      program_b64: Buffer.from(program).toString("base64"),
+      max_per_call_micro: 1_000_000,
+      expiry_round: expiryRound,
+      daily_cap_micro: 5_000_000,
+      allowed_models: null,
+    });
+    const lsig = new algosdk.LogicSigAccount(program);
+    lsig.sign(owner.sk);
+    const pay = paymentFetch(harness, appFetch, {
+      address: owner.addr.toString(),
+      signTransactions: async (txns: Uint8Array[], indexes?: number[]) =>
+        txns.map((t, i) => (indexes && !indexes.includes(i) ? null : algosdk.signLogicSigTransactionObject(algosdk.decodeUnsignedTransaction(t), lsig).blob)),
+    });
+    const settledBefore = harness.chain.settled.length;
+    const res = await pay("http://localhost/v1/models/gpt-4o/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(chatBody("legacy", 200)),
+    });
+    expect(res.status).toBe(402);
+    expect(await res.text()).toContain("mandate_not_bound");
+    expect(harness.chain.settled.length).toBe(settledBefore);
+  });
+
   it("enforces the daily cap, model allow-list and revocation", async () => {
     const quote = await (await appFetch(post("/v1/quote", { model: "gpt-4o", ...chatBody("cap", 2000) }))).json();
     const perCall = quote.quote.finalPriceUsd;

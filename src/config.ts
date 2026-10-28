@@ -126,7 +126,7 @@ export const config: GatewayConfig = {
   // separate from AVM_ADDRESS so the revenue address can be a cold or multisig account.
   payoutMnemonic: (process.env.PAYOUT_WALLET_MNEMONIC || process.env.REFUND_WALLET_MNEMONIC)?.trim() || undefined,
   adminToken: process.env.ADMIN_TOKEN?.trim() || undefined,
-  priceMargin: num("PRICE_MARGIN", 0.3),
+  priceMargin: num("PRICE_MARGIN", 0.03),
   priceMinFloor: num("PRICE_MIN_FLOOR", 0.001),
   rebateMinPayoutUsd: num("REBATE_MIN_PAYOUT_USD", 0.05),
   creatorPayoutMinUsd: num("CREATOR_PAYOUT_MIN_USD", 1),

@@ -174,6 +174,10 @@ export function registerPaymentHooks(server: x402ResourceServer): void {
         return abortWith(state, "mandate_not_active", `Mandate ${id} is ${mandate ? mandate.status : "not registered"}.`);
       }
       if (mandate.owner !== payer) return abortWith(state, "mandate_owner_mismatch", "Mandate was registered by a different owner.");
+      // Mandates registered before agent binding pay with the credential alone; refuse them.
+      if (!mandateTerms.agent) {
+        return abortWith(state, "mandate_not_bound", "This mandate is not bound to an agent key, so its credential alone could pay. Create a new mandate bound to the agent's key.");
+      }
       // Algorand enforces this too; checking here gives a clear error before any settlement.
       if (!agentSignatureValid(ctx.paymentPayload, mandateTerms)) {
         return abortWith(state, "mandate_agent_signature_invalid", "Payment is not signed by the mandate's agent key.");
