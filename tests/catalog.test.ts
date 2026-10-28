@@ -9,6 +9,11 @@ import { isPublicAddress, validateCreatorUrl } from "../src/market/safeFetch.js"
 import { canonicalJson, ReceiptSigner, verifyReceiptWithKey, publicKeyFromRaw } from "../src/receipts/index.js";
 
 describe("catalog", () => {
+  it("replaces the retired OpenAI image model with a separately named supported model", () => {
+    const registry = new ModelRegistry();
+    expect(registry.getModel("gpt-image-1")).toBeUndefined();
+    expect(registry.getModel("gpt-image-1.5")).toMatchObject({ provider: "openai", upstreamModelId: "gpt-image-1.5", displayName: "GPT Image 1.5" });
+  });
   it("names every model after the upstream that actually serves it", () => {
     const veo = INITIAL_MODELS.find((m) => m.slug === "veo-3.1-fast")!;
     expect(veo.upstreamModelId).toBe("fal-ai/veo3.1/fast");
@@ -163,6 +168,63 @@ describe("marketplace SSRF guard", () => {
 });
 
 describe("catalog sync", () => {
+  async function withOpenAI(run: (config: typeof import("../src/config.js").config, sync: typeof import("../src/models/sync.js").syncCatalog) => Promise<void>) {
+    const { config } = await import("../src/config.js");
+    const { syncCatalog } = await import("../src/models/sync.js");
+    const previous = { skipUpstreamVerification: config.skipUpstreamVerification, openaiApiKey: config.openaiApiKey };
+    config.skipUpstreamVerification = false;
+    config.openaiApiKey = "test-openai-key";
+    try { await run(config, syncCatalog); } finally { Object.assign(config, previous); }
+  }
+
+  it("authenticates OpenAI discovery and withholds account-inaccessible models", async () => withOpenAI(async (_config, sync) => {
+    const registry = new ModelRegistry(INITIAL_MODELS.filter(m => ["gpt-image-1.5", "tts-1"].includes(m.slug)));
+    let checked = false;
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      if (url === "https://api.openai.com/v1/models") {
+        checked = true;
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer test-openai-key");
+        // Models are unavailable while the authenticated check is still in flight.
+        expect(registry.getEnabledModels()).toHaveLength(0);
+        return Response.json({ data: [{ id: "gpt-image-1.5" }] });
+      }
+      return Response.json({ data: [], prices: [] });
+    }) as typeof fetch;
+    const report = await sync(registry, fakeFetch);
+    expect(checked).toBe(true);
+    expect(report.unverified).toEqual({ "tts-1": "tts-1" });
+    expect(registry.getEnabledModels().map(m => m.slug)).toEqual(["gpt-image-1.5"]);
+  }));
+
+  it("fails closed on initial OpenAI discovery failure and recovers after a successful check", async () => withOpenAI(async (_config, sync) => {
+    const registry = new ModelRegistry(INITIAL_MODELS.filter(m => m.slug === "gpt-image-1.5"));
+    let available = false;
+    const fakeFetch = (async (url: string) => url === "https://api.openai.com/v1/models"
+      ? available ? Response.json({ data: [{ id: "gpt-image-1.5" }] }) : new Response("unavailable", { status: 503 })
+      : Response.json({ data: [], prices: [] })) as typeof fetch;
+    const report = await sync(registry, fakeFetch);
+    expect(report.errors).toContain("OpenAI sync failed: OpenAI model list returned 503");
+    expect(registry.getEnabledModels()).toHaveLength(0);
+    available = true;
+    await sync(registry, fakeFetch);
+    expect(registry.getEnabledModels()).toHaveLength(1);
+    available = false;
+    await sync(registry, fakeFetch);
+    expect(registry.getEnabledModels()).toHaveLength(1);
+  }));
+
+  it("does not query or advertise OpenAI models when its key is missing", async () => withOpenAI(async (config, sync) => {
+    config.openaiApiKey = undefined;
+    const registry = new ModelRegistry(INITIAL_MODELS.filter(m => m.slug === "gpt-image-1.5"));
+    const fakeFetch = (async (url: string) => {
+      expect(url).not.toContain("api.openai.com");
+      return Response.json({ data: [], prices: [] });
+    }) as typeof fetch;
+    const report = await sync(registry, fakeFetch);
+    expect(report.unverified).toEqual({ "gpt-image-1.5": "gpt-image-1.5" });
+    expect(registry.getEnabledModels()).toHaveLength(0);
+  }));
+
   it("disables OpenRouter models that are not listed and adopts live prices", async () => {
     process.env.SKIP_UPSTREAM_VERIFICATION = "false";
     const { syncCatalog } = await import("../src/models/sync.js");

@@ -98,6 +98,20 @@ describe("pre-payment checks", () => {
   it("returns 404 for unknown models and wrong operations, never 402", async () => {
     expect((await appFetch(post("/v1/models/nope/chat/completions", chatBody()))).status).toBe(404);
     expect((await appFetch(post("/v1/models/gpt/images/generations", { prompt: "x" }))).status).toBe(404);
+    const retired = await appFetch(post("/v1/models/gpt-image-1/images/generations", { prompt: "x" }));
+    expect(retired.status).toBe(404);
+    expect(retired.headers.get("payment-required")).toBeNull();
+  });
+
+  it("rejects an unverified OpenAI image model before asking for payment", async () => {
+    const { defaultModelRegistry } = await import("../src/models/registry.js");
+    defaultModelRegistry.markUnverified("gpt-image-1.5", "not listed for this OpenAI account");
+    try {
+      const res = await appFetch(post("/v1/models/gpt-image-1.5/images/generations", { prompt: "x" }));
+      expect(res.status).toBe(503);
+      expect(res.headers.get("payment-required")).toBeNull();
+      expect((await res.json()).error.message).toContain("No payment was taken");
+    } finally { defaultModelRegistry.clearUnverified("gpt-image-1.5"); }
   });
 
   it("quotes a 402 for exactly the amount /v1/quote returns", async () => {

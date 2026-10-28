@@ -70,6 +70,35 @@ async function syncOpenRouter(models: ModelDefinition[], registry: ModelRegistry
   }
 }
 
+/** OpenAI's catalog is account-specific; use the same key that serves requests. */
+async function syncOpenAI(models: ModelDefinition[], registry: ModelRegistry, report: SyncReport, fetchImpl: FetchLike) {
+  if (!models.length) return;
+  if (!config.openaiApiKey) {
+    for (const model of models) {
+      registry.markUnverified(model.slug, "OpenAI API key is not configured");
+      report.unverified[model.slug] = model.upstreamModelId;
+    }
+    return;
+  }
+  const res = await fetchImpl("https://api.openai.com/v1/models", {
+    headers: { Authorization: `Bearer ${config.openaiApiKey}` },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`OpenAI model list returned ${res.status}`);
+  const data = await res.json() as { data?: Array<{ id: string }> };
+  if (!Array.isArray(data.data)) throw new Error("OpenAI model list returned an invalid catalog");
+  const ids = new Set(data.data.map((m) => m.id));
+  for (const model of models) {
+    if (!ids.has(model.upstreamModelId)) {
+      registry.markUnverified(model.slug, `upstream '${model.upstreamModelId}' is not listed for this OpenAI account`);
+      report.unverified[model.slug] = model.upstreamModelId;
+      continue;
+    }
+    registry.clearUnverified(model.slug);
+    report.verified.push(model.slug);
+  }
+}
+
 async function syncFal(models: ModelDefinition[], registry: ModelRegistry, report: SyncReport, fetchImpl: FetchLike) {
   for (const model of models) {
     const url = `https://api.fal.ai/v1/models?endpoint_id=${encodeURIComponent(model.upstreamModelId)}`;
@@ -145,9 +174,10 @@ export async function syncCatalog(registry: ModelRegistry, fetchImpl: FetchLike 
 
   if (!config.skipUpstreamVerification) {
     const openrouter = all.filter((m) => m.provider === "openrouter");
+    const openai = all.filter((m) => m.provider === "openai");
     const fal = all.filter((m) => m.provider === "fal");
     // Nothing is sold until its upstream has been seen at least once.
-    for (const m of [...openrouter, ...fal]) {
+    for (const m of [...openrouter, ...openai, ...fal]) {
       if (!registry.wasVerified(m.slug)) registry.markUnverified(m.slug, "upstream verification pending");
     }
     try {
@@ -158,6 +188,14 @@ export async function syncCatalog(registry: ModelRegistry, fetchImpl: FetchLike 
         if (!registry.wasVerified(m.slug)) registry.markUnverified(m.slug, "OpenRouter model list unavailable");
       }
       report.errors.push(`OpenRouter sync failed: ${err.message}`);
+    }
+    try {
+      await syncOpenAI(openai, registry, report, fetchImpl);
+    } catch (err: any) {
+      for (const m of openai) {
+        if (!registry.wasVerified(m.slug)) registry.markUnverified(m.slug, "OpenAI model list unavailable");
+      }
+      report.errors.push(`OpenAI sync failed: ${err.message}`);
     }
     try {
       await syncFal(fal, registry, report, fetchImpl);
