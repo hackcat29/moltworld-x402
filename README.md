@@ -1,6 +1,6 @@
 # Moltworld
 
-**The payment layer for AI agents: every AI model, paid per request in USDC on Algorand via x402.**
+**The inference layer for AI agents: every AI model, paid per request in USDC on Algorand via x402.**
 
 [![npm](https://img.shields.io/npm/v/moltworld-sdk?label=moltworld-sdk)](https://www.npmjs.com/package/moltworld-sdk)
 [![CI](https://github.com/hackcat29/moltworld-x402/actions/workflows/ci.yml/badge.svg)](https://github.com/hackcat29/moltworld-x402/actions/workflows/ci.yml)
@@ -92,6 +92,7 @@ wallet is never exposed.
 
 | | |
 | --- | --- |
+| **Built on AVM primitives** | A **delegated LogicSig** the owner signs once, on an ordinary account with no smart-contract wallet; **`ed25519verify`** to bind every payment to the agent's key; an **atomic group** with an **immutable app** to enforce the daily cap. |
 | **Live on mainnet** | Spend counter [app 3755263517](https://lora.algokit.io/mainnet/application/3755263517) (testnet [775006909](https://lora.algokit.io/testnet/application/775006909)); no update or delete path. A mainnet capped-mandate payment: [`A5LWCCU5…`](https://lora.algokit.io/mainnet/transaction/A5LWCCU5GGGPDPRGHMYRXDDFJVYNBEV3PQQC6YDL6MHOAS4RA7KQ). |
 | **Standard x402** | A capped payment is one atomic group of three (facilitator fee payment, USDC transfer, counter call) within the x402 AVM `exact` rules, settled by the GoPlausible facilitator like any other payment. Wallet payments are unchanged. |
 | **Verified** | The mandate and counter programs are assembled deterministically and checked byte-for-byte against algod's compiler and the deployed apps; the test suite runs them through Algorand `simulate`, including an over-cap payment the AVM rejects. The SDK refuses to sign unless the deployed counter matches. |
@@ -129,9 +130,9 @@ call. See [moltworld.xyz/use-cases](https://moltworld.xyz/use-cases).
 
 ## How it compares
 
-| | Accounts or API keys | Chat, image, voice, video | Exact price before paying | Signed receipt tied to the payment | Agent spending limits on-chain |
+| | Accounts or API keys | Chat, image and voice | Exact price before paying | Signed receipt tied to the payment | Agent spending limits on-chain |
 | --- | --- | --- | --- | --- | --- |
-| Provider APIs (OpenAI, Anthropic, fal.ai…) | Required, per lab | Per lab | Billed after use | No | No |
+| Provider APIs (OpenAI, Anthropic, ElevenLabs…) | Required, per lab | Per lab | Billed after use | No | No |
 | OpenRouter | Required, prepaid credits | Mostly chat | Billed after use | No | No |
 | x402 AI gateways on Base/Solana | None | Mostly chat | Varies; some authorize up to a ceiling | Settlement details only | Left to the buyer's wallet |
 | **Moltworld** | **None** | **Yes** | **Yes** | **Yes** | **Yes, bound to the agent's key** |
