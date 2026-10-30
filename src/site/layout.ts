@@ -92,6 +92,7 @@ function header(path: string): string {
       </nav>
       <div class="header-actions">
         <a class="status" id="netStatus" href="/stats" title="Gateway status"><span class="pulse" aria-hidden="true"></span><span id="netLabel">${network}</span></a>
+        <a class="icon-btn" href="https://github.com/hackcat29/moltworld-x402" aria-label="Moltworld on GitHub" title="GitHub">${icon("github", 18)}</a>
         <a class="btn btn-header" href="/playground">Playground ${icon("arrow", 14)}</a>
         <button class="menu-btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="nav"><span class="menu-lines" aria-hidden="true"></span><span class="menu-text">Menu</span></button>
       </div>

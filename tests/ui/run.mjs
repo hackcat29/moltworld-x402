@@ -159,6 +159,7 @@ async function runViewport(browser, vp, scheme, pages) {
   check("header menus", triggers.join(",") === "Product,Solutions,Use cases,Developers", triggers.join(","));
   const direct = (await page.locator(".nav-direct").allTextContents()).map((t) => t.trim());
   check("header links", direct.join(",") === "Models,Pricing,Stats", direct.join(","));
+  check("header links to GitHub", await page.locator('.header-actions a[href="https://github.com/hackcat29/moltworld-x402"]').isVisible());
   const collapsed = await page.locator("#menuBtn").isVisible();
   if (collapsed) {
     check("mobile: nav hidden until the menu button is used", !(await page.locator("#nav").isVisible()));
